@@ -32,6 +32,13 @@ pub fn deinit(self: *Args, allocator: Allocator) void {
     allocator.free(self.positional);
     self.* = undefined;
 }
+pub fn debugPrint(self: Args) void {
+    std.debug.print("ARGS ", .{});
+    for (self.args) |arg| {
+        std.debug.print("'{s}' ", .{arg});
+    }
+    std.debug.print("\n", .{});
+}
 
 pub const Error = error{ MissingValue, ParseFailed } || Allocator.Error || std.fs.Dir.StatFileError;
 
@@ -40,25 +47,51 @@ pub const FlagParser = struct {
 };
 
 pub const ArgIterator = struct {
-    inner: std.process.ArgIterator,
+    // inner: std.process.ArgIterator,
+    args: [][:0]u8,
+    index: usize,
+    allocator: Allocator,
 
     pub fn init(allocator: Allocator) !ArgIterator {
         return .{
-            .inner = try std.process.argsWithAllocator(allocator),
+            .args = try std.process.argsAlloc(allocator),
+            .index = 0,
+            .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *ArgIterator) void {
-        self.inner.deinit();
+        self.allocator.free(self.args);
         self.* = undefined;
     }
 
+    pub fn countRemaing(self: ArgIterator) usize {
+        return self.args.len - self.index;
+    }
+
+    pub inline fn peek(self: ArgIterator) ?[:0]const u8 {
+        if (self.index < self.args.len) {
+            return self.args[self.index];
+        }
+        return null;
+    }
+
+    pub inline fn skip(self: *ArgIterator) ?[:0]const u8 {
+        if (self.index < self.args.len) {
+            self.index += 1;
+        }
+    }
+
     pub inline fn next(self: *ArgIterator) ?[:0]const u8 {
-        return self.inner.next();
+        if (self.index < self.args.len) {
+            defer self.index += 1;
+            return self.args[self.index];
+        }
+        return null;
     }
 
     pub inline fn nextOrFail(self: *ArgIterator) ![:0]const u8 {
-        return self.inner.next() orelse Error.MissingValue;
+        return self.next() orelse Error.MissingValue;
     }
 
     pub inline fn nextInt(self: *ArgIterator, T: type, base: u8) !T {
@@ -111,10 +144,6 @@ pub const ArgIterator = struct {
             .path = arg,
             .stat = stat,
         };
-    }
-
-    pub inline fn skip(self: *ArgIterator) ?[:0]const u8 {
-        return self.inner.skip();
     }
 };
 

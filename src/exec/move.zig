@@ -1,5 +1,6 @@
 const std = @import("std");
 const util = @import("util");
+const builtin = @import("builtin");
 const build_option = @import("build_option");
 
 const assert = std.debug.assert;
@@ -36,46 +37,53 @@ pub fn main() !void {
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_instance.allocator();
     var reporter: Reporter = .init(arena);
-
     if (!util.env.exists("trash")) {
         util.log("ERROR: $trash must be set", .{});
-        reporter.EXIT(1);
+        std.process.exit(1);
     }
 
     var flags = Flags{};
     var args = try Args.init(arena, &flags.flag_parser);
-
-    std.debug.print("ARGS: ", .{});
-    for (args.args) |a| {
-        std.debug.print("{s} ", .{a});
+    if (builtin.mode == .Debug) {
+        std.debug.print("---------------------------------------------------------------------------------\n", .{});
+        args.debugPrint();
+        flags.debugPrint();
+        std.debug.print("---------------------------------------------------------------------------------\n", .{});
     }
-    std.debug.print("\n", .{});
 
     if (flags.help) {
         util.log("{s}\n\n  Version:\n    {s} {s} {s} ({s})", .{ help_msg, build_option.version, build_option.change_id[0..8], build_option.commit_id[0..8], build_option.date });
-        return reporter.EXIT(0);
+        std.process.exit(1);
     }
 
     if (flags.version) {
         util.log("move {s} {s} {s} ({s})", .{ build_option.version, build_option.change_id[0..8], build_option.commit_id[0..8], build_option.date });
-        return reporter.EXIT(0);
+        return;
     }
 
     const wd = util.WorkDir.initCWD();
     switch (args.positional.len) {
         0, 1 => {
             util.log("USAGE: move src.. dest\n    (clobber flags --trash --backup --force)", .{});
-            return reporter.EXIT(1);
+            std.process.exit(1);
         },
         2 => {
             const src_path = args.positional[0];
             const dest_path = args.positional[1];
             if (try wd.stat(src_path) == null) {
-                try reporter.pushError("src path not found: ({s})", .{src_path});
+                try reporter.pushError("src not found: ({s})", .{src_path});
+            }
+            if (reporter.isTrouble()) {
+                return reporter.EXIT_WITH_REPORT(1);
             }
 
             if (try wd.stat(dest_path)) |dest_stat| {
-                if (try checkDest(&reporter, flags, dest_path, dest_stat, false)) {
+                const is_parrent = try checkDest(&reporter, flags, dest_path, dest_stat, false);
+                if (reporter.isTrouble()) {
+                    return reporter.EXIT_WITH_REPORT(1);
+                }
+
+                if (is_parrent) {
                     const real_dest_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ dest_path, src_path });
                     if (try wd.stat(real_dest_path)) |real_dest_stat| {
                         _ = try checkDest(&reporter, flags, real_dest_path, real_dest_stat, true);
@@ -85,11 +93,11 @@ pub fn main() !void {
 
             if (flags.rename) {
                 if (std.mem.indexOf(u8, dest_path, "/")) |_| {
-                    try reporter.pushError("--remove cannot be used when moving into a directory", .{});
+                    try reporter.pushError("--rename value may not inculed a '/'", .{});
                 }
             }
 
-            if (!reporter.isSuccess()) {
+            if (reporter.isTrouble()) {
                 return reporter.EXIT_WITH_REPORT(1);
             }
 
@@ -105,7 +113,7 @@ pub fn main() !void {
                         try reporter.pushError("src path not found: ({s})", .{src_path});
                     }
                 }
-                if (!reporter.isSuccess()) {
+                if (reporter.isTrouble()) {
                     try reporter.pushError("moved 0/{d} files", .{src_path_list.len});
                     return reporter.EXIT_WITH_REPORT(1);
                 }
@@ -117,7 +125,7 @@ pub fn main() !void {
                 } else {
                     try reporter.pushError("dest must be a directory.", .{});
                 }
-                if (!reporter.isSuccess()) {
+                if (reporter.isTrouble()) {
                     try reporter.pushError("moved 0/{d} files", .{src_path_list.len});
                     return reporter.EXIT_WITH_REPORT(1);
                 }
@@ -130,18 +138,21 @@ pub fn main() !void {
                         _ = try checkDest(&reporter, flags, real_dest_path, real_dest_stat, true);
                     }
                 }
-                if (!reporter.isSuccess()) {
+                if (reporter.isTrouble()) {
                     try reporter.pushError("moved 0/{d} files", .{src_path_list.len});
                     return reporter.EXIT_WITH_REPORT(1);
                 }
             }
+            // GO FOR IT
             for (args.positional[0 .. args.positional.len - 1]) |arg| {
                 try move(&reporter, flags, wd, arg, dest_path);
             }
             util.log("moved {d}/{d} files", .{ src_path_list.len, src_path_list.len });
         },
     }
-    reporter.EXIT_WITH_REPORT(0);
+
+    const status: u8 = if (reporter.isError()) 1 else 0;
+    reporter.EXIT_WITH_REPORT(status);
 }
 
 // returns true if dest is a valid parrent directory
@@ -162,17 +173,17 @@ pub fn checkDest(
                     }
                     return true;
                 }
-                if (flags.overwrite_style == .NoClobberError) {
+                if (flags.clobber_style == .NoClobberError) {
                     try reporter.pushError("dest is a directory. use clobber flag or add '/' to dest to move src... into.", .{});
                 }
             } else {
-                if (flags.overwrite_style == .NoClobberError) {
+                if (flags.clobber_style == .NoClobberError) {
                     try reporter.pushError("dest child path exists ({s})", .{dest_path});
                 }
             }
         },
         .file, .sym_link => {
-            if (flags.overwrite_style == .NoClobberError) {
+            if (flags.clobber_style == .NoClobberError) {
                 try reporter.pushError("dest child path exists ({s})", .{dest_path});
                 if (dest_is_into_path) {} else {
                     try reporter.pushError("dest path exists, choose a clobber flag (--trash --backup --force)", .{});
@@ -180,7 +191,7 @@ pub fn checkDest(
             }
         },
         else => {
-            switch (flags.overwrite_style) {
+            switch (flags.clobber_style) {
                 .NoClobberError => {
                     try reporter.pushError("dest path exists, choose a clobber flag (--trash --backup --force)", .{});
                 },
@@ -197,52 +208,51 @@ pub fn checkDest(
 }
 
 /// asserts that everything has been prevalidated.. src must be able to move to dest or it will panic
-pub fn move(reporter: *Reporter, flag: Flags, cwd: util.WorkDir, src: [:0]const u8, dest: [:0]const u8) !void {
-    var dest_path = dest;
+pub fn move(reporter: *Reporter, flag: Flags, cwd: util.WorkDir, src_path: [:0]const u8, dest_path: [:0]const u8) !void {
     var rename_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var real_dest_path = dest_path;
     var into_dir = false;
 
-    if (std.mem.endsWith(u8, dest_path, "/")) {
-        if (!try cwd.exists(dest_path) or (try cwd.stat(dest_path)).?.kind != .directory) {
-            @panic("dest must be directiry");
-        }
-        const file_name = std.fs.path.basename(src);
-        dest_path = try std.fmt.bufPrintZ(&rename_buffer, "{s}{s}", .{ dest_path, file_name });
+    if (std.mem.endsWith(u8, real_dest_path, "/")) {
+        const file_name = std.fs.path.basename(src_path);
+        real_dest_path = try std.fmt.bufPrintZ(&rename_buffer, "{s}{s}", .{ real_dest_path, file_name });
         into_dir = true;
     }
+
     if (flag.rename) {
         if (into_dir) {
-            @panic("invalid --rename flag");
+            reporter.PANIC("invalid --rename flag", .{});
         }
-        const dest_dirname = std.fs.path.dirname(src) orelse "";
-        dest_path = try std.fmt.bufPrintZ(&rename_buffer, "{s}/{s}", .{ dest_dirname, dest_path });
+        const dest_dirname = std.fs.path.dirname(src_path) orelse "";
+        real_dest_path = try std.fmt.bufPrintZ(&rename_buffer, "{s}/{s}", .{ dest_dirname, real_dest_path });
     }
-    if (try cwd.exists(dest_path)) {
-        switch (flag.overwrite_style) {
-            .NoClobberError => @panic("NoClobberError should be unreachable"),
+
+    if (try cwd.exists(real_dest_path)) {
+        switch (flag.clobber_style) {
+            .NoClobberError => reporter.PANIC("NoClobberError should be unreachable", .{}),
             .Trash => {
-                const stat = (try cwd.stat(dest_path)).?;
-                const trash_path = try cwd.trashKind(dest_path, stat.kind);
-                if (!flag.silent) try reporter.pushWarning("trashed: {s} > $trash/{s}", .{ dest_path, basename(trash_path) });
+                const stat = (try cwd.stat(real_dest_path)).?;
+                const trash_path = try cwd.trashKind(real_dest_path, stat.kind);
+                if (!flag.silent) try reporter.pushWarning("trashed: {s} > $trash/{s}", .{ real_dest_path, basename(trash_path) });
             },
             .Backup => {
-                const path_destinaton_backup = try util.path.backupPathFromPath(dest_path);
+                const path_destinaton_backup = try util.path.backupPathFromPath(real_dest_path);
                 if (try cwd.exists(path_destinaton_backup)) {
                     const stat = (try cwd.stat(path_destinaton_backup)).?;
                     const trash_path = try cwd.trashKind(path_destinaton_backup, stat.kind);
                     if (!flag.silent) try reporter.pushWarning("trashed: {s} > $trash/{s}", .{ path_destinaton_backup, basename(trash_path) });
                 }
-                try cwd.move(dest_path, path_destinaton_backup);
+                try cwd.move(real_dest_path, path_destinaton_backup);
                 if (!flag.silent) try reporter.pushWarning("backup created: {s}", .{path_destinaton_backup});
             },
             .Force => {
-                if (!flag.silent) try reporter.pushWarning("clobbered: {s}", .{dest_path});
+                if (!flag.silent) try reporter.pushWarning("clobbered: {s}", .{real_dest_path});
             },
         }
     }
-    try cwd.move(src, dest_path);
+    try cwd.move(src_path, real_dest_path);
     if (!flag.silent) {
-        util.log("{s} > {s}", .{ src, dest_path });
+        util.log("{s} > {s}", .{ src_path, real_dest_path });
     }
 }
 
@@ -251,19 +261,29 @@ const Flags = struct {
     version: bool = false,
     rename: bool = false,
     silent: bool = false,
-    overwrite_style: OverwriteStyle = .NoClobberError,
+    clobber_style: ClobberStyle = .NoClobberError,
+
+    param_count: usize = 0,
 
     flag_parser: Args.FlagParser = .{
         .parseFn = Flags.implParseFn,
     },
 
-    pub const OverwriteStyle = enum(u3) {
+    pub fn debugPrint(self: Flags) void {
+        util.log("FLAG clobber: {t}", .{self.clobber_style});
+        util.log("FLAG rename: {any}", .{self.rename});
+        util.log("FLAG slient: {any}", .{self.silent});
+        util.log("FLAG help: {any}", .{self.help});
+        util.log("FLAG version: {any}", .{self.version});
+    }
+
+    pub const ClobberStyle = enum(u3) {
         NoClobberError = 0, // DEFAULT
         Force = 1,
         Trash = 2,
         Backup = 3,
 
-        pub fn prioritySet(self: *OverwriteStyle, value: OverwriteStyle) void {
+        pub fn prioritySet(self: *ClobberStyle, value: ClobberStyle) void {
             if (@intFromEnum(self.*) < @intFromEnum(value)) {
                 self.* = value;
             }
@@ -272,17 +292,16 @@ const Flags = struct {
 
     pub fn implParseFn(flag_parser: *Args.FlagParser, arg: [:0]const u8, _: *Args.ArgIterator) Args.Error!bool {
         var self = @as(*Flags, @fieldParentPtr("flag_parser", flag_parser));
-
         if (Args.eqlFlag(arg, "--trash", "-t")) {
-            self.overwrite_style.prioritySet(.Trash);
+            self.clobber_style.prioritySet(.Trash);
             return true;
         }
         if (Args.eqlFlag(arg, "--backup", "-b")) {
-            self.overwrite_style.prioritySet(.Backup);
+            self.clobber_style.prioritySet(.Backup);
             return true;
         }
         if (Args.eqlFlag(arg, "--force", "-f")) {
-            self.overwrite_style.prioritySet(.Force);
+            self.clobber_style.prioritySet(.Force);
             return true;
         }
         if (Args.eqlFlag(arg, "--rename", "-r")) {

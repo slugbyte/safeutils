@@ -1,5 +1,6 @@
 const std = @import("std");
 const util = @import("util");
+const builtin = @import("builtin");
 const build_option = @import("build_option");
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Args = util.Args;
@@ -20,11 +21,12 @@ pub fn main() !void {
 
     if (!util.env.exists("trash")) {
         util.log("ERROR: $trash must be set", .{});
-        reporter.EXIT(1);
+        std.process.exit(1);
     }
 
     var flag = Flags{};
     const args = try Args.init(arena, &flag.flag_parser);
+    if (builtin.mode == .Debug) args.debugPrint();
 
     if (flag.help) {
         util.log("{s}\n\n  Version:\n   {s} {s} {s} ({s})", .{
@@ -49,7 +51,7 @@ pub fn main() !void {
 
     if (args.positional.len == 0) {
         util.log("USAGE: trash [file]...", .{});
-        reporter.EXIT(1);
+        std.process.exit(1);
     }
 
     var success_count: usize = 0;
@@ -57,7 +59,6 @@ pub fn main() !void {
     const wd = util.WorkDir.initCWD();
     for (args.positional) |path| {
         const stat = try wd.stat(path) orelse {
-            fail_count +|= 1;
             try reporter.pushWarning("file not found: {s}", .{path});
             continue;
         };
@@ -79,7 +80,9 @@ pub fn main() !void {
     if (success_count > 1 and fail_count == 0) {
         util.log("trashed {d}/{d} files", .{ success_count, success_count + fail_count });
     }
-    reporter.EXIT(null);
+
+    const status: u8 = if (reporter.isTrouble()) 1 else 0;
+    reporter.EXIT_WITH_REPORT(status);
 }
 
 const Flags = struct {

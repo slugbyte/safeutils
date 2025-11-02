@@ -35,13 +35,9 @@ pub fn PANIC(self: Reporter, comptime format: []const u8, args: anytype) noretur
     std.debug.panic(format, args);
 }
 
-pub fn EXIT_WITH_REPORT(self: Reporter, status: ?u8) noreturn {
+pub fn EXIT_WITH_REPORT(self: Reporter, status: u8) noreturn {
     self.report();
-    self.EXIT(status);
-}
-
-pub fn EXIT(self: Reporter, status: ?u8) noreturn {
-    std.process.exit(status orelse if (self.isSuccess()) 0 else 1);
+    std.process.exit(status);
 }
 
 pub inline fn report(self: Reporter) void {
@@ -53,8 +49,16 @@ pub inline fn report(self: Reporter) void {
     }
 }
 
-pub inline fn isSuccess(self: Reporter) bool {
-    return self.warn_list.items.len == 0 and self.error_list.items.len == 0;
+pub inline fn isError(self: Reporter) bool {
+    return self.error_list.items.len != 0;
+}
+
+pub inline fn isWarning(self: Reporter) bool {
+    return self.warn_list.items.len != 0;
+}
+
+pub inline fn isTrouble(self: Reporter) bool {
+    return self.isError() or self.isWarning();
 }
 
 pub inline fn getAllWarning(self: Reporter) [][]const u8 {
