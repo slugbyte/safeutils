@@ -20,11 +20,10 @@ pub const help_msg =
     \\
     \\  Clobber Style:
     \\    (default)  error with warning
-    \\    -f --force    overwrite the file
     \\    -t --trash    move to $trash
     \\    -b --backup   rename the dest file
     \\
-    \\    If mulitiple clober flags the presidence is (backup > trash > force > default).
+    \\    If mulitiple clober flags the presidence is (backup > trash > no clobber).
     \\  
     \\  Other Flags:
     \\    --version     print version
@@ -64,7 +63,7 @@ pub fn main() !void {
     const wd = util.WorkDir.initCWD();
     switch (args.positional.len) {
         0, 1 => {
-            util.log("USAGE: move src.. dest\n    (clobber flags --trash --backup --force)", .{});
+            util.log("USAGE: move src.. dest\n    (clobber flags --trash --backup)", .{});
             std.process.exit(1);
         },
         2 => {
@@ -84,7 +83,7 @@ pub fn main() !void {
                 }
 
                 if (is_parrent) {
-                    const real_dest_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ dest_path, src_path });
+                    const real_dest_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ dest_path, basename(src_path) });
                     if (try wd.stat(real_dest_path)) |real_dest_stat| {
                         _ = try checkDest(&reporter, flags, real_dest_path, real_dest_stat, true);
                     }
@@ -95,6 +94,10 @@ pub fn main() !void {
                 if (std.mem.indexOf(u8, dest_path, "/")) |_| {
                     try reporter.pushError("--rename value may not inculed a '/'", .{});
                 }
+            }
+
+            if (try wd.isPathEqual(src_path, dest_path)) {
+                try reporter.pushError("src and dest cannot be same location: ({s} == {s})", .{ src_path, dest_path });
             }
 
             if (reporter.isTrouble()) {
@@ -133,9 +136,13 @@ pub fn main() !void {
 
             { // CHECK REAL DEST PATHS ARE VALID
                 for (src_path_list) |src_path| {
-                    const real_dest_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ dest_path, src_path });
+                    const real_dest_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ dest_path, basename(src_path) });
+
                     if (try wd.stat(real_dest_path)) |real_dest_stat| {
                         _ = try checkDest(&reporter, flags, real_dest_path, real_dest_stat, true);
+                    }
+                    if (try wd.isPathEqual(src_path, real_dest_path)) {
+                        try reporter.pushError("src and dest cannot be same location: ({s} == {s})", .{ src_path, real_dest_path });
                     }
                 }
                 if (reporter.isTrouble()) {
@@ -173,34 +180,35 @@ pub fn checkDest(
                     }
                     return true;
                 }
-                if (flags.clobber_style == .NoClobberError) {
+                if (flags.clobber_style == .NoClobber) {
                     try reporter.pushError("dest is a directory. use clobber flag or add '/' to dest to move src... into.", .{});
                 }
             } else {
-                if (flags.clobber_style == .NoClobberError) {
-                    try reporter.pushError("dest child path exists ({s})", .{dest_path});
+                if (flags.clobber_style == .NoClobber) {
+                    try reporter.pushError("dest child dir exists ({s})", .{dest_path});
                 }
             }
         },
         .file, .sym_link => {
-            if (flags.clobber_style == .NoClobberError) {
-                try reporter.pushError("dest child path exists ({s})", .{dest_path});
-                if (dest_is_into_path) {} else {
-                    try reporter.pushError("dest path exists, choose a clobber flag (--trash --backup --force)", .{});
+            if (flags.clobber_style == .NoClobber) {
+                if (dest_is_into_path) {
+                    try reporter.pushError("dest child path exists ({s})", .{dest_path});
+                } else {
+                    try reporter.pushError("dest path exists, choose a clobber flag (--trash --backup)", .{});
                 }
             }
         },
         else => {
             switch (flags.clobber_style) {
-                .NoClobberError => {
-                    try reporter.pushError("dest path exists, choose a clobber flag (--trash --backup --force)", .{});
+                .NoClobber => {
+                    try reporter.pushError("dest path exists, choose a clobber flag (--trash --backup)", .{});
                 },
                 .Trash => {
-                    try reporter.pushError("dest path exists and --trash does not support file type {t}, use clobber (--backup or --force)", .{
+                    try reporter.pushError("dest path exists and --trash does not support file type {t}, use --backup", .{
                         dest_stat.kind,
                     });
                 },
-                .Backup, .Force => {},
+                .Backup => {},
             }
         },
     }
@@ -229,7 +237,7 @@ pub fn move(reporter: *Reporter, flag: Flags, cwd: util.WorkDir, src_path: [:0]c
 
     if (try cwd.exists(real_dest_path)) {
         switch (flag.clobber_style) {
-            .NoClobberError => reporter.PANIC("NoClobberError should be unreachable", .{}),
+            .NoClobber => reporter.PANIC("NoClobber should be unreachable", .{}),
             .Trash => {
                 const stat = (try cwd.stat(real_dest_path)).?;
                 const trash_path = try cwd.trashKind(real_dest_path, stat.kind);
@@ -245,9 +253,6 @@ pub fn move(reporter: *Reporter, flag: Flags, cwd: util.WorkDir, src_path: [:0]c
                 try cwd.move(real_dest_path, path_destinaton_backup);
                 if (!flag.silent) try reporter.pushWarning("backup created: {s}", .{path_destinaton_backup});
             },
-            .Force => {
-                if (!flag.silent) try reporter.pushWarning("clobbered: {s}", .{real_dest_path});
-            },
         }
     }
     try cwd.move(src_path, real_dest_path);
@@ -261,7 +266,7 @@ const Flags = struct {
     version: bool = false,
     rename: bool = false,
     silent: bool = false,
-    clobber_style: ClobberStyle = .NoClobberError,
+    clobber_style: ClobberStyle = .NoClobber,
 
     param_count: usize = 0,
 
@@ -278,10 +283,9 @@ const Flags = struct {
     }
 
     pub const ClobberStyle = enum(u3) {
-        NoClobberError = 0, // DEFAULT
-        Force = 1,
-        Trash = 2,
-        Backup = 3,
+        NoClobber = 0, // DEFAULT
+        Trash = 1,
+        Backup = 2,
 
         pub fn prioritySet(self: *ClobberStyle, value: ClobberStyle) void {
             if (@intFromEnum(self.*) < @intFromEnum(value)) {
@@ -298,10 +302,6 @@ const Flags = struct {
         }
         if (Args.eqlFlag(arg, "--backup", "-b")) {
             self.clobber_style.prioritySet(.Backup);
-            return true;
-        }
-        if (Args.eqlFlag(arg, "--force", "-f")) {
-            self.clobber_style.prioritySet(.Force);
             return true;
         }
         if (Args.eqlFlag(arg, "--rename", "-r")) {

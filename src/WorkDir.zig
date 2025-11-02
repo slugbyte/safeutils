@@ -1,8 +1,8 @@
 const std = @import("std");
 const util = @import("./root.zig");
 
+const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
-
 const WorkDir = @This();
 
 dir: std.fs.Dir,
@@ -86,16 +86,28 @@ pub fn trashAutoKind(self: WorkDir, path: []const u8) ![]const u8 {
     return self.trashKind(path, path_stat.kind);
 }
 
-/// Asserts both paths exist
 pub fn isPathEqual(self: WorkDir, path_a: []const u8, path_b: []const u8) !bool {
-    var buf_realpath_a: [std.fs.max_path_bytes]u8 = undefined;
-    var buf_realpath_b: [std.fs.max_path_bytes]u8 = undefined;
-    const realpath_a = try self.dir.realpath(path_a, &buf_realpath_a);
-    const realpath_b = try self.dir.realpath(path_b, &buf_realpath_b);
-    if (std.mem.eql(u8, realpath_a, realpath_b)) {
-        return true;
-    }
-    return false;
+    var buffer: [3 * std.fs.max_path_bytes]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buffer);
+    const arena = fba.allocator();
+
+    const cwd = try self.dir.realpathAlloc(arena, ".");
+    const resolve_a = blk_a: {
+        if (std.fs.path.isAbsolute(path_a)) {
+            break :blk_a try std.fs.path.resolve(arena, &.{path_a});
+        } else {
+            break :blk_a try std.fs.path.resolve(arena, &.{ cwd, path_a });
+        }
+    };
+    const resolve_b = blk_b: {
+        if (std.fs.path.isAbsolute(path_b)) {
+            break :blk_b try std.fs.path.resolve(arena, &.{path_b});
+        } else {
+            break :blk_b try std.fs.path.resolve(arena, &.{ cwd, path_b });
+        }
+    };
+
+    return std.mem.eql(u8, resolve_a, resolve_b);
 }
 
 pub fn move(self: WorkDir, path_source: []const u8, path_destination: []const u8) !void {

@@ -26,11 +26,10 @@ Usage: move src.. dest (--flags)
 
   Clobber Style:
     (default)  error with warning
-    -f --force    overwrite the file
     -t --trash    move to $trash
     -b --backup   rename the dest file
 
-    If mulitiple clober flags the presidence is (backup > trash > force > default).
+    If mulitiple clober flags the presidence is (backup > trash > no clobber).
   
   Other Flags:
     --version     print version
