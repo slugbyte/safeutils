@@ -21,6 +21,35 @@ pub fn openFile(self: WorkDir, path: []const u8, open_flags: std.fs.File.OpenFla
     return try self.dir.openFile(path, open_flags);
 }
 
+pub fn readFile(self: WorkDir, allocator: Allocator, path: []const u8) ![:0]const u8 {
+    const file = try self.openFile(path, .{});
+    // TODO: can i remove this buffer? it seems like it might not be needed when streamReamaing to Writer.Allocating...
+    var buffer: [4 * 1024]u8 = undefined;
+    var file_reader = file.reader(&buffer);
+    var allocating = std.Io.Writer.Allocating.init(allocator);
+    errdefer allocating.deinit();
+    _ = file_reader.interface.streamRemaining(&allocating.writer) catch return error.OutOfMemory;
+    return try allocating.toOwnedSliceSentinel(0);
+}
+
+pub fn move(self: WorkDir, path_source: []const u8, path_destination: []const u8) !void {
+    try self.dir.rename(path_source, path_destination);
+}
+
+pub fn stat(self: WorkDir, path: []const u8) !?std.fs.File.Stat {
+    return self.dir.statFile(path) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => err,
+    };
+}
+
+pub fn exists(self: WorkDir, path: []const u8) !bool {
+    if (try self.stat(path)) |_| {
+        return true;
+    }
+    return false;
+}
+
 pub fn hashFileSha256(self: WorkDir, file: std.fs.File, digest_buffer: *[Sha256.digest_length]u8) !void {
     _ = self;
     const Hashing = std.Io.Writer.Hashing(Sha256);
@@ -40,20 +69,6 @@ pub fn hashFilePathSha256(self: WorkDir, path: []const u8, digest_buffer: *[Sha2
     defer file.close();
 
     try self.hashFileSha256(file, digest_buffer);
-}
-
-pub fn stat(self: WorkDir, path: []const u8) !?std.fs.File.Stat {
-    return self.dir.statFile(path) catch |err| switch (err) {
-        error.FileNotFound => null,
-        else => err,
-    };
-}
-
-pub fn exists(self: WorkDir, path: []const u8) !bool {
-    if (try self.stat(path)) |_| {
-        return true;
-    }
-    return false;
 }
 
 pub fn trashKind(self: WorkDir, path: []const u8, kind: std.fs.File.Kind) ![]const u8 {
@@ -108,8 +123,4 @@ pub fn isPathEqual(self: WorkDir, path_a: []const u8, path_b: []const u8) !bool 
     };
 
     return std.mem.eql(u8, resolve_a, resolve_b);
-}
-
-pub fn move(self: WorkDir, path_source: []const u8, path_destination: []const u8) !void {
-    try self.dir.rename(path_source, path_destination);
 }

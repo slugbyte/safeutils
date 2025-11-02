@@ -25,7 +25,7 @@ pub fn main() !void {
     }
 
     var flag = Flags{};
-    const args = try Args.init(arena, &flag.flag_parser);
+    const args = try Args.parse(arena, &flag.flag_parser);
     if (builtin.mode == .Debug) args.debugPrint();
 
     if (flag.help) {

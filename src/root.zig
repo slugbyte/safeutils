@@ -13,8 +13,3 @@ pub fn log(comptime fmt: []const u8, args: anytype) void {
     const msg = std.fmt.bufPrint(&buffer, fmt, args) catch return;
     std.debug.print("{s}\n", .{msg});
 }
-
-pub fn exit(status: u8, comptime fmt: []const u8, arg: anytype) noreturn {
-    log(fmt, arg);
-    std.process.exit(status);
-}

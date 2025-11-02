@@ -3,47 +3,55 @@ const Allocator = std.mem.Allocator;
 
 const Args = @This();
 
-args: [][:0]const u8,
-positional: [][:0]const u8,
-program_path: [:0]const u8,
-
-pub fn init(allocator: Allocator, flag_parser: *FlagParser) !Args {
+pub fn parse(allocator: Allocator, flag_parser: *FlagParser) !void {
     var iter = try ArgIterator.init(allocator);
-    defer iter.deinit();
+    defer {
+        iter.reset();
+        if (!flag_parser.setArgIteratorFn(flag_parser, iter)) {
+            iter.deinit();
+        }
+    }
+
     const program_path = try allocator.dupeZ(u8, iter.next().?);
-    var args = std.ArrayList([:0]const u8).empty;
+    errdefer allocator.free(program_path);
+    if (!flag_parser.setProgramPathFn(flag_parser, program_path)) {
+        allocator.free(program_path);
+    }
+
     var positional = std.ArrayList([:0]const u8).empty;
+    errdefer positional.deinit(allocator);
     while (iter.next()) |arg| {
-        try args.append(allocator, try allocator.dupeZ(u8, arg));
         if (!try flag_parser.parseFn(flag_parser, arg, &iter)) {
             try positional.append(allocator, try allocator.dupeZ(u8, arg));
         }
     }
-    return .{
-        .program_path = program_path,
-        .args = try args.toOwnedSlice(allocator),
-        .positional = try positional.toOwnedSlice(allocator),
-    };
-}
 
-pub fn deinit(self: *Args, allocator: Allocator) void {
-    allocator.free(self.program_path);
-    allocator.free(self.args);
-    allocator.free(self.positional);
-    self.* = undefined;
-}
-pub fn debugPrint(self: Args) void {
-    std.debug.print("ARGS ", .{});
-    for (self.args) |arg| {
-        std.debug.print("'{s}' ", .{arg});
+    const positional_list = try positional.toOwnedSlice(allocator);
+    if (!flag_parser.setPositionalListFn(flag_parser, positional_list)) {
+        allocator.free(positional_list);
     }
-    std.debug.print("\n", .{});
 }
 
 pub const Error = error{ MissingValue, ParseFailed } || Allocator.Error || std.fs.Dir.StatFileError;
 
 pub const FlagParser = struct {
     parseFn: *const fn (*FlagParser, [:0]const u8, *ArgIterator) Error!bool,
+    /// return true if ArgIterator is now owned by caller
+    setArgIteratorFn: *const fn (*FlagParser, ArgIterator) bool = implNoopSetArgIterator,
+    /// return true if positional_list is now owned by caller
+    setPositionalListFn: *const fn (*FlagParser, [][:0]const u8) bool = implNoopSetPositionalList,
+    /// return true if program_path is now owned by caller
+    setProgramPathFn: *const fn (*FlagParser, [:0]const u8) bool = implNoopSetProgramPath,
+
+    pub fn implNoopSetProgramPath(_: *FlagParser, _: [:0]const u8) bool {
+        return false;
+    }
+    pub fn implNoopSetPositionalList(_: *FlagParser, _: [][:0]const u8) bool {
+        return false;
+    }
+    pub fn implNoopSetArgIterator(_: *FlagParser, _: ArgIterator) bool {
+        return false;
+    }
 };
 
 pub const ArgIterator = struct {
@@ -65,6 +73,23 @@ pub const ArgIterator = struct {
         self.* = undefined;
     }
 
+    pub fn create(allocator: Allocator) !*ArgIterator {
+        const iter = try allocator.create(ArgIterator);
+        errdefer allocator.destroy(iter);
+        iter.* = try ArgIterator.init(allocator);
+        return iter;
+    }
+
+    pub fn destroy(self: *ArgIterator) void {
+        const allocator = self.allocator;
+        self.deinit();
+        allocator.destroy(self);
+    }
+
+    pub fn reset(self: *ArgIterator) void {
+        self.index = 0;
+    }
+
     pub fn countRemaing(self: ArgIterator) usize {
         return self.args.len - self.index;
     }
@@ -80,6 +105,7 @@ pub const ArgIterator = struct {
         if (self.index < self.args.len) {
             self.index += 1;
         }
+        return null;
     }
 
     pub inline fn next(self: *ArgIterator) ?[:0]const u8 {
@@ -109,14 +135,14 @@ pub const ArgIterator = struct {
         return std.meta.stringToEnum(T, arg) catch return Error.ParseFailed;
     }
 
-    pub inline fn nextFileOpen(self: *ArgIterator) !std.fs.File {
+    pub inline fn nextFileOpen(self: *ArgIterator, flags: std.fs.File.OpenFlags) !std.fs.File {
         const file_path = try self.nextFilePath();
         if (file_path.stat.kind != .file) return Error.ParseFailed;
-        return try std.fs.cwd().openFile(file_path.path, .{});
+        return try std.fs.cwd().openFile(file_path.path, flags);
     }
 
     pub inline fn nextFileRead(self: *ArgIterator, allocator: Allocator) ![:0]const u8 {
-        const file = try self.nextFileOpen();
+        const file = try self.nextFileOpen(.{});
         // TODO: can i remove this buffer? it seems like it might not be needed when streamReamaing to Writer.Allocating...
         var buffer: [4 * 1024]u8 = undefined;
         var file_reader = file.reader(&buffer);
@@ -208,13 +234,5 @@ pub inline fn endsWithAnyIgnoreCase(haystack: []const u8, needles: [][]const u8)
             return true;
         }
     }
-    return false;
-}
-
-pub const noop_flag_parser: FlagParser = .{
-    .parseFn = implNoopParseFn,
-};
-
-pub fn implNoopParseFn(_: *FlagParser, _: [:0]const u8, _: *ArgIterator) bool {
     return false;
 }
