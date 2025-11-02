@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const build_option = @import("build_option");
 
 const assert = std.debug.assert;
+const dirname = std.fs.path.dirname;
 const basename = std.fs.path.basename;
 const Allocator = std.mem.Allocator;
 const Args = util.Args;
@@ -68,7 +69,7 @@ pub fn main() !void {
         },
         2 => {
             const src_path = args.positional[0];
-            const dest_path = args.positional[1];
+            var dest_path = args.positional[1];
             if (try wd.stat(src_path) == null) {
                 try reporter.pushError("src not found: ({s})", .{src_path});
             }
@@ -94,6 +95,7 @@ pub fn main() !void {
                 if (std.mem.indexOf(u8, dest_path, "/")) |_| {
                     try reporter.pushError("--rename value may not inculed a '/'", .{});
                 }
+                dest_path = try std.fmt.allocPrintSentinel(arena, "{s}/{s}", .{ dirname(src_path) orelse "./", dest_path }, 0);
             }
 
             if (try wd.isPathEqual(src_path, dest_path)) {
@@ -225,14 +227,6 @@ pub fn move(reporter: *Reporter, flag: Flags, cwd: util.WorkDir, src_path: [:0]c
         const file_name = std.fs.path.basename(src_path);
         real_dest_path = try std.fmt.bufPrintZ(&rename_buffer, "{s}{s}", .{ real_dest_path, file_name });
         into_dir = true;
-    }
-
-    if (flag.rename) {
-        if (into_dir) {
-            reporter.PANIC("invalid --rename flag", .{});
-        }
-        const dest_dirname = std.fs.path.dirname(src_path) orelse "";
-        real_dest_path = try std.fmt.bufPrintZ(&rename_buffer, "{s}/{s}", .{ dest_dirname, real_dest_path });
     }
 
     if (try cwd.exists(real_dest_path)) {
