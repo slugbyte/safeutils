@@ -1,5 +1,6 @@
 const std = @import("std");
 const util = @import("../root.zig");
+const builtin = @import("builtin");
 const known_file = @import("./known_file.zig");
 
 const Allocator = std.mem.Allocator;
@@ -41,8 +42,41 @@ pub fn exists(self: WorkDir, path: []const u8) !bool {
     return false;
 }
 
+pub fn trashinfoWrite(self: WorkDir, allocator: Allocator, original_path: []const u8, trash_path: []const u8) !void {
+    var arena_instance = std.heap.ArenaAllocator.init(allocator);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
+
+    const trashinfo_dirpath = try known_file.dirpathTrashInfo(arena);
+    const trashinfo_name = try util.fmt(arena, "{s}.trashinfo", .{std.fs.path.basename(trash_path)});
+    const trashinfo_filepath = try std.fs.path.join(arena, &.{
+        trashinfo_dirpath,
+        trashinfo_name,
+    });
+
+    const cwd_path = try self.dir.realpathAlloc(arena, ".");
+    const absoltue_original_path = blk_a: {
+        if (std.fs.path.isAbsolute(original_path)) {
+            break :blk_a original_path;
+        } else {
+            break :blk_a try std.fs.path.resolve(arena, &.{ cwd_path, original_path });
+        }
+    };
+
+    const file = try self.dir.createFile(trashinfo_filepath, .{});
+    defer file.close();
+    var buffer: [1024]u8 = undefined;
+    var writer = file.writer(&buffer);
+    // TODO: add date?
+    try writer.interface.print(
+        \\[Trash Info]
+        \\Path={s}
+    , .{absoltue_original_path});
+    try writer.interface.flush();
+}
+
 /// move a file, directory or sym_link to the trash
-pub fn trashKind(self: WorkDir, allocator: Allocator, path: []const u8, kind: std.fs.File.Kind) ![]const u8 {
+pub fn trash(self: WorkDir, allocator: Allocator, path: []const u8, kind: std.fs.File.Kind) ![]const u8 {
     switch (kind) {
         .file => {
             const file_name = std.fs.path.basename(path);
@@ -50,6 +84,9 @@ pub fn trashKind(self: WorkDir, allocator: Allocator, path: []const u8, kind: st
             try self.hashFilepathSha256(path, &digest);
             const trash_path = try known_file.trashFilenameDigest(allocator, file_name, &digest);
             try self.move(path, trash_path);
+            if (builtin.os.tag == .linux) {
+                try self.trashinfoWrite(allocator, path, trash_path);
+            }
             return trash_path;
         },
         .directory, .sym_link => {
@@ -59,18 +96,15 @@ pub fn trashKind(self: WorkDir, allocator: Allocator, path: []const u8, kind: st
                 trash_path = try known_file.trashFilenameTimestampRandom(allocator, file_name);
             }
             try self.move(path, trash_path);
+            if (builtin.os.tag == .linux) {
+                try self.trashinfoWrite(allocator, path, trash_path);
+            }
             return trash_path;
         },
         else => {
             return error.TrashFileKindNotSupported;
         },
     }
-}
-
-/// move a file, directory or sym_link to the trash
-pub fn trashAutoKind(self: WorkDir, allocator: Allocator, path: []const u8) ![]const u8 {
-    const path_stat = try self.stat(path);
-    return self.trashKind(allocator, path, path_stat.kind);
 }
 
 /// check if two paths resolve to same location on the filestem

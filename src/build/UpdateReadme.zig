@@ -34,29 +34,28 @@ pub fn make(b: *std.Build.Step, opt: std.Build.Step.MakeOptions) !void {
 
 const README_CONTENT =
     \\# safeutils
-    \\> coreutil replacements that aim to protect you from overwriting work.
+    \\> coreutil replacements that aim to protect me from overwriting work.
     \\
     \\## about
     \\I lost work one too many times, by accidently overwriting data with coreutils. I made these utils to
     \\reduce the chances that would happen again. They provide much less dangerous clobber strats.
     \\ 
-    \\### trash strategy
-    \\* files become `$trash/(basename)__(hash).trash`
-    \\* dirs and links `$trash/(basename)__(timestamp).trash`
-    \\  * if there is a conflict it will be name `$trash/(basename)__(timestap)_(random).trash`
+    \\### trash clobber strategy
+    \\* move files to trash but rename them so they dont confict
+    \\* if on `linux` it also adds a `.trashinfo` file so that you can undo using a file browser
+    \\* files become `$trash/(basename)__(url_safe_base64_hash).trash`
+    \\* dirs and links become `$trash/(basename)__(timestamp).trash` or `$trash/(basename)__(timestap)_(random).trash` if there is a conflict.
     \\
-    \\## backup strategy
+    \\### backup clobber strategy
     \\* rename file `(original_path).backup~`
-    \\  * if a backup exists it will be moved to trash
+    \\* if a backup allready exists it will be moved to trash
     \\
     \\## move (mv replacement)
-    \\move or rename files without accidently replacing anything.
     \\```
     \\{s}
     \\```
     \\
     \\## trash (rm replacement)
-    \\Move files into $trash with a naming strat that wont overwrite existing trashed files.
     \\```
     \\{s}
     \\```

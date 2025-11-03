@@ -56,7 +56,7 @@ pub fn main() !void {
             try ctx.reporter.pushWarning("file not found: {s}", .{path});
             continue;
         };
-        const trash_path = ctx.cwd.trashKind(ctx.arena, path, stat.kind) catch |err| switch (err) {
+        const trash_path = ctx.cwd.trash(ctx.arena, path, stat.kind) catch |err| switch (err) {
             else => ctx.reporter.PANIC("unexpected error: {t}", .{err}),
             error.TrashFileKindNotSupported => {
                 fail_count +|= 1;

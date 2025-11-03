@@ -9,6 +9,18 @@ pub fn dirpathHome(allocator: Allocator) []const u8 {
     }).?;
 }
 
+pub fn dirpathTrashInfo(allocator: Allocator) ![]const u8 {
+    if (builtin.os.tag != .linux) {
+        @compileError("sorry trash info is only for linux");
+    }
+    const home = dirpathHome(allocator);
+    defer allocator.free(home);
+    return std.fs.path.join(allocator, &.{
+        home,
+        ".local/share/Trash/info",
+    });
+}
+
 pub fn dirpathTrash(allocator: Allocator) ![]const u8 {
     switch (builtin.os.tag) {
         .linux => {
