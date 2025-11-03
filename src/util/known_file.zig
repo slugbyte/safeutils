@@ -47,7 +47,12 @@ pub fn dirpathTrash(allocator: Allocator) ![]const u8 {
 pub fn trashFilenameTimestamp(allocator: Allocator, file_name: []const u8) ![]const u8 {
     const trash_dirpath = try dirpathTrash(allocator);
     defer allocator.free(trash_dirpath);
-    return try util.fmt(allocator, "{s}/{s}__{d}.trash", .{ trash_dirpath, file_name, std.time.milliTimestamp() });
+    return try util.fmt(allocator, "{s}/{s}__{d}.trash{s}", .{
+        trash_dirpath,
+        file_name,
+        std.time.milliTimestamp(),
+        std.fs.path.extension(file_name),
+    });
 }
 
 /// cheate a filename for a trash file `{original_name}__{timestamp}_{random}.trash`
@@ -56,7 +61,13 @@ pub fn trashFilenameTimestampRandom(allocator: Allocator, file_name: []const u8)
     defer allocator.free(trash_dirpath);
     var rand_buffer: [4]u8 = undefined;
     std.crypto.random.bytes(&rand_buffer);
-    return try util.fmt(allocator, "{s}/{s}__{d}_{X}.trash", .{ trash_dirpath, file_name, std.time.milliTimestamp(), rand_buffer });
+    return try util.fmt(allocator, "{s}/{s}__{d}_{X}.trash{s}", .{
+        trash_dirpath,
+        file_name,
+        std.time.milliTimestamp(),
+        rand_buffer,
+        std.fs.path.extension(file_name),
+    });
 }
 
 /// cheate a filename for a trash file `{original_name}__{url_safe_b64_digest}.trash`
@@ -70,5 +81,10 @@ pub fn trashFilenameDigest(allocator: Allocator, file_name: []const u8, digest: 
     var b64_buffer: [22]u8 = undefined;
     const b64_short_digest = std.base64.url_safe_no_pad.Encoder.encode(&b64_buffer, digest[0..16]);
 
-    return try util.fmt(allocator, "{s}/{s}__{s}.trash", .{ trash_dirpath, file_name, b64_short_digest });
+    return try util.fmt(allocator, "{s}/{s}__{s}.trash{s}", .{
+        trash_dirpath,
+        file_name,
+        b64_short_digest,
+        std.fs.path.extension(file_name),
+    });
 }

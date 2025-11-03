@@ -289,15 +289,12 @@ const Context = struct {
         std.debug.print("---------------------------------------------------------------------------------\n", .{});
         self.args.reset();
         _ = self.args.skip();
-        std.debug.print("ARGS ", .{});
+        std.debug.print("ARGS: ", .{});
         while (self.args.next()) |arg| {
             std.debug.print("'{s}' ", .{arg});
         }
-        util.log("\nFLAG clobber: {t}", .{self.flag_clobber_style});
-        util.log("FLAG rename: {any}", .{self.flag_rename});
-        util.log("FLAG slient: {any}", .{self.flag_silent});
-        util.log("FLAG help: {any}", .{self.flag_help});
-        util.log("FLAG version: {any}", .{self.flag_version});
+        std.debug.print("\n", .{});
+        util.logFlagFields(Context, self.*);
         std.debug.print("---------------------------------------------------------------------------------\n", .{});
     }
 

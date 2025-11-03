@@ -43,7 +43,10 @@ Usage: move src.. dest (--flags)
 USAGE: trash files.. (--flags)
   Move files to $trash.
 
-  --version      print version
-  --s --silent   dont print trash paths
-  --h --help     display help
+  --version                 print version
+  -r --revert trash_file    (linux-only) revert a file from trash back to where it came from
+  -R --revert-fzf           (linux-only) use fzf to select a trash_file to revert
+  --viu                     add support for viu block image display in fzf preview
+  -s --silent               dont print trash paths
+  -h --help                 display help
 ```
