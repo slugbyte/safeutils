@@ -1,5 +1,6 @@
 const std = @import("std");
 const util = @import("../root.zig");
+const known_file = @import("./known_file.zig");
 
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -41,21 +42,21 @@ pub fn exists(self: WorkDir, path: []const u8) !bool {
 }
 
 /// move a file, directory or sym_link to the trash
-pub fn trashKind(self: WorkDir, path: []const u8, kind: std.fs.File.Kind) ![]const u8 {
+pub fn trashKind(self: WorkDir, allocator: Allocator, path: []const u8, kind: std.fs.File.Kind) ![]const u8 {
     switch (kind) {
         .file => {
             const file_name = std.fs.path.basename(path);
             var digest: [Sha256.digest_length]u8 = undefined;
             try self.hashFilepathSha256(path, &digest);
-            const trash_path = try util.path.trashPathNameDigest(file_name, &digest);
+            const trash_path = try known_file.trashFilenameDigest(allocator, file_name, &digest);
             try self.move(path, trash_path);
             return trash_path;
         },
         .directory, .sym_link => {
             const file_name = std.fs.path.basename(path);
-            var trash_path = try util.path.trashPathNameTimestamp(file_name);
+            var trash_path = try known_file.trashFilenameTimestamp(allocator, file_name);
             if (try self.exists(trash_path)) {
-                trash_path = try util.path.trashPathNameTimestampRandom(file_name);
+                trash_path = try known_file.trashFilenameTimestampRandom(allocator, file_name);
             }
             try self.move(path, trash_path);
             return trash_path;
@@ -67,9 +68,9 @@ pub fn trashKind(self: WorkDir, path: []const u8, kind: std.fs.File.Kind) ![]con
 }
 
 /// move a file, directory or sym_link to the trash
-pub fn trashAutoKind(self: WorkDir, path: []const u8) ![]const u8 {
+pub fn trashAutoKind(self: WorkDir, allocator: Allocator, path: []const u8) ![]const u8 {
     const path_stat = try self.stat(path);
-    return self.trashKind(path, path_stat.kind);
+    return self.trashKind(allocator, path, path_stat.kind);
 }
 
 /// check if two paths resolve to same location on the filestem

@@ -2,7 +2,8 @@
 const std = @import("std");
 
 pub const env = @import("./util/env.zig");
-pub const path = @import("./util/path.zig");
+pub const known_file = @import("./util/known_file.zig");
+
 pub const ArgIterator = @import("./util/ArgIterator.zig");
 pub const FlagParser = @import("./util/FlagParser.zig");
 pub const Reporter = @import("./util/Reporter.zig");

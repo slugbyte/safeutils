@@ -35,11 +35,6 @@ pub const help_msg =
 ;
 
 pub fn main() !void {
-    if (!util.env.exists("trash")) {
-        util.log("ERROR: $trash must be set", .{});
-        std.process.exit(1);
-    }
-
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_instance.allocator();
     var ctx = try Context.init(arena);
@@ -238,14 +233,14 @@ pub fn move(ctx: *Context, src_path: [:0]const u8, dest_path: [:0]const u8) !voi
             .NoClobber => ctx.reporter.PANIC("NoClobber should be unreachable", .{}),
             .Trash => {
                 const stat = (try ctx.cwd.stat(real_dest_path)).?;
-                const trash_path = try ctx.cwd.trashKind(real_dest_path, stat.kind);
+                const trash_path = try ctx.cwd.trashKind(ctx.arena, real_dest_path, stat.kind);
                 if (!ctx.flag_silent) try ctx.reporter.pushWarning("trashed: {s} > $trash/{s}", .{ real_dest_path, basename(trash_path) });
             },
             .Backup => {
-                const path_destinaton_backup = try util.path.backupPathFromPath(real_dest_path);
+                const path_destinaton_backup = try util.fmtZ(ctx.arena, "{s}.backup~", .{src_path});
                 if (try ctx.cwd.exists(path_destinaton_backup)) {
                     const stat = (try ctx.cwd.stat(path_destinaton_backup)).?;
-                    const trash_path = try ctx.cwd.trashKind(path_destinaton_backup, stat.kind);
+                    const trash_path = try ctx.cwd.trashKind(ctx.arena, path_destinaton_backup, stat.kind);
                     if (!ctx.flag_silent) try ctx.reporter.pushWarning("trashed: {s} > $trash/{s}", .{ path_destinaton_backup, basename(trash_path) });
                 }
                 try ctx.cwd.move(real_dest_path, path_destinaton_backup);

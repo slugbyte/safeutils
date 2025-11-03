@@ -18,11 +18,6 @@ pub const help_msg =
 ;
 
 pub fn main() !void {
-    if (!util.env.exists("trash")) {
-        util.log("ERROR: $trash must be set", .{});
-        std.process.exit(1);
-    }
-
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_instance.allocator();
 
@@ -61,7 +56,7 @@ pub fn main() !void {
             try ctx.reporter.pushWarning("file not found: {s}", .{path});
             continue;
         };
-        const trash_path = ctx.cwd.trashKind(path, stat.kind) catch |err| switch (err) {
+        const trash_path = ctx.cwd.trashKind(ctx.arena, path, stat.kind) catch |err| switch (err) {
             else => ctx.reporter.PANIC("unexpected error: {t}", .{err}),
             error.TrashFileKindNotSupported => {
                 fail_count +|= 1;
