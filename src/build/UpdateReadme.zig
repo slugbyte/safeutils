@@ -56,6 +56,8 @@ const README_CONTENT =
     \\```
     \\
     \\## trash (rm replacement)
+    \\trash can revert and fetch files using fzf with a custom preview that shows `revert_path`, `stat_kind`, `file_size` and `content`.
+    \\if you have [viu](https://github.com/atanunq/viu) installed you can also pass a `--viu` flag so that you can see image previews (in block form).
     \\```
     \\{s}
     \\```

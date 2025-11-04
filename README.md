@@ -39,6 +39,8 @@ Usage: move src.. dest (--flags)
 ```
 
 ## trash (rm replacement)
+trash can revert and fetch files using fzf with a custom preview that shows `revert_path`, `stat_kind`, `file_size` and `content`.
+if you have [viu](https://github.com/atanunq/viu) installed you can also pass a `--viu` flag so that you can see image previews (in block form).
 ```
 USAGE: trash files.. (--flags)
   Move files to $trash.
@@ -46,9 +48,8 @@ USAGE: trash files.. (--flags)
   --version                 print version
   -r --revert trash_file    (linux-only) revert a file from trash back to where it came from
   -R --revert-fzf           (linux-only) use fzf to revert a trash file
-  -f --fetch trash_file     (linux-only) fetch a file from the trash to the current dir
-  -F --fetch-fzf            (linux-only) use fzf to feth a trash_file
-  --viu                     add support for viu block image display in fzf preview
+  -F --fetch-fzf            (linux-only) use fzf to fetch a trash_file to the current dir
+     --viu                  add support for viu block image display in fzf preview
   -s --silent               dont print trash paths
   -h --help                 display help
 ```
