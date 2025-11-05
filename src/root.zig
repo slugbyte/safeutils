@@ -10,6 +10,12 @@ pub const FlagParser = @import("./util/FlagParser.zig");
 pub const Reporter = @import("./util/Reporter.zig");
 pub const WorkDir = @import("./util/WorkDir.zig");
 pub const NullByteDetectorWriter = @import("./util/NullByteDetectorWriter.zig");
+pub const StackAllocator = @import("./util/StackAllocator.zig").StackAllocator;
+pub const StackFilenameAllocator = @import("./util/StackAllocator.zig").StackFilenameAllocator;
+pub const StackFilepathAllocator = @import("./util/StackAllocator.zig").StackFilepathAllocator;
+
+pub const FilepathBuffer = [std.fs.max_path_bytes]u8;
+pub const FilenameBuffer = [std.fs.max_path_bytes]u8;
 
 pub const Allocator = std.mem.Allocator;
 pub const assert = std.debug.assert;

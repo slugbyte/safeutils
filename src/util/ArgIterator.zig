@@ -9,41 +9,33 @@ pub const Error = error{
 } || Allocator.Error;
 
 // inner: std.process.ArgIterator,
-args: [][:0]u8,
+args: []const [:0]u8,
 index: usize,
-allocator: Allocator,
 
-pub fn init(allocator: Allocator) !ArgIterator {
+pub fn init(args: []const [:0]u8) ArgIterator {
     return .{
-        .args = try std.process.argsAlloc(allocator),
+        .args = args,
         .index = 0,
-        .allocator = allocator,
     };
 }
 
-pub fn deinit(self: *ArgIterator) void {
-    self.allocator.free(self.args);
+pub fn initProcessArgs(allocator: Allocator) !ArgIterator {
+    return .{
+        .args = try std.process.argsAlloc(allocator),
+        .index = 0,
+    };
+}
+
+pub fn deinit(self: *ArgIterator, allocator: Allocator) void {
+    std.process.argsFree(allocator, self.args);
     self.* = undefined;
 }
 
-pub fn create(allocator: Allocator) !*ArgIterator {
-    const iter = try allocator.create(ArgIterator);
-    errdefer allocator.destroy(iter);
-    iter.* = try ArgIterator.init(allocator);
-    return iter;
-}
-
-pub fn destroy(self: *ArgIterator) void {
-    const allocator = self.allocator;
-    self.deinit();
-    allocator.destroy(self);
-}
-
-pub fn reset(self: *ArgIterator) void {
+pub inline fn reset(self: *ArgIterator) void {
     self.index = 0;
 }
 
-pub fn countRemaing(self: ArgIterator) usize {
+pub inline fn remaining(self: ArgIterator) usize {
     return self.args.len - self.index;
 }
 

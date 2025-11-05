@@ -38,7 +38,12 @@ const UndoData = struct {
 pub fn main() !void {
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_instance.allocator();
+    var wat = util.known_file.FilenameBumper.parse("cool.gif");
+    wat.bump();
+    util.log("name: '{s}', count: {?d}, ext: {s}", .{ wat.name, wat.count, wat.ext });
 
+    var filename_sa = util.StackFilenameAllocator.empty;
+    util.log("trash_filename: {s}", .{try wat.fmtFilename(filename_sa.allocatorInvalidatePrevious())});
     var ctx = try Context.init(arena);
     if (builtin.mode == .Debug) ctx.debugPrint();
     if (ctx.reporter.isError()) {
@@ -82,7 +87,7 @@ pub fn main() !void {
     }
 
     if (ctx.flag_fzf_preview) |value| {
-        return revertFZFPreview(&ctx, value);
+        return fzfPreview(&ctx, value);
     }
 
     if (ctx.positionals.len == 0) {
@@ -125,6 +130,7 @@ pub const RevertInfo = struct {
     trash_stat: std.fs.File.Stat,
     trashinfo_path: []const u8,
     revert_path: []const u8,
+    trash_link: ?[]const u8,
 
     pub fn init(ctx: *Context, trash_name: []const u8) !RevertInfo {
         const basename = std.fs.path.basename(trash_name);
@@ -139,7 +145,15 @@ pub const RevertInfo = struct {
             try util.fmt(ctx.arena, "{s}.trashinfo", .{basename}),
         });
 
-        const trash_stat = try ctx.cwd.stat(trash_path);
+        const link_buffer = try ctx.arena.alloc(u8, std.fs.max_path_bytes);
+        const trash_link = ctx.cwd.dir.readLink(trash_path, link_buffer) catch null;
+        if (trash_link == null) {
+            ctx.arena.free(link_buffer);
+        }
+        var trash_stat = try ctx.cwd.stat(trash_path);
+        if (trash_link != null) {
+            trash_stat.?.kind = .sym_link;
+        }
         const trashinfo_stat = try ctx.cwd.stat(trashinfo_path);
 
         if (trash_stat == null) {
@@ -171,11 +185,12 @@ pub const RevertInfo = struct {
             .trash_stat = trash_stat.?,
             .trashinfo_path = trashinfo_path,
             .revert_path = revert_path.?,
+            .trash_link = trash_link,
         };
     }
 };
 
-pub fn revertFZFPreview(ctx: *Context, trash_name: []const u8) !void {
+pub fn fzfPreview(ctx: *Context, trash_name: []const u8) !void {
     const revert_info = try RevertInfo.init(ctx, trash_name);
     var stdout_buffer: [4 * 1024]u8 = undefined;
     var stdout = std.fs.File.stdout().writer(&stdout_buffer);
@@ -183,40 +198,78 @@ pub fn revertFZFPreview(ctx: *Context, trash_name: []const u8) !void {
     try stdout.interface.print("-----------------------------------------------------\n", .{});
     try stdout.interface.print("Path: {s}\n", .{revert_info.revert_path});
     try stdout.interface.print("Kind: {t}\n", .{revert_info.trash_stat.kind});
-    try stdout.interface.print("Size: {d}\n", .{revert_info.trash_stat.size});
+    if (revert_info.trash_stat.kind == .file) {
+        try stdout.interface.print("Size: {d}\n", .{revert_info.trash_stat.size});
+    }
     try stdout.interface.print("-----------------------------------------------------\n", .{});
 
-    const file = try ctx.cwd.filepathOpen(revert_info.trash_path, .{});
-    var reader = file.reader(&.{});
-    var null_detector_buffer: [1024]u8 = undefined;
-    var null_detector = try NullByteDetectorWriter.init(&null_detector_buffer);
-    _ = reader.interface.streamRemaining(&null_detector.interface) catch {};
+    switch (revert_info.trash_stat.kind) {
+        else => {},
+        .sym_link => {
+            var path_buffer: util.FilepathBuffer = undefined;
+            const link = try ctx.cwd.dir.readLink(revert_info.trash_path, &path_buffer);
+            try stdout.interface.print("links to: {s}/\n", .{link});
+        },
+        .directory => {
+            var dir = try ctx.cwd.dir.openDir(revert_info.trash_path, .{ .iterate = true });
+            defer dir.close();
 
-    if (null_detector.contains_null) {
-        const is_image = util.endsWithAnyIgnoreCase(revert_info.revert_path, &.{ ".png", ".gif", ".jpg", ".jpeg" });
-        if (ctx.flag_fzf_preview_viu and is_image and try util.exeExists(ctx.arena, "viu")) {
-            var viu = std.process.Child.init(&.{
-                "viu",
-                "-w",
-                "50",
-                "-b",
-                util.trim(revert_info.trash_path),
-            }, ctx.arena);
-            viu.stderr_behavior = .Ignore;
-            viu.stdin_behavior = .Ignore;
-            viu.stdout_behavior = .Pipe;
-            try viu.spawn();
-            var viu_reader = viu.stdout.?.reader(&.{});
-            _ = try viu_reader.interface.streamRemaining(&stdout.interface);
-            viu.stdout.?.close();
-            viu.stdout = null;
-            _ = try viu.wait();
-        } else {
-            _ = try stdout.interface.write("binary data\n");
-        }
-    } else {
-        try reader.seekTo(0);
-        _ = reader.interface.streamRemaining(&stdout.interface) catch {};
+            try stdout.interface.print("{s}/\n", .{std.fs.path.basename(revert_info.trash_path)});
+            var iter = dir.iterate();
+            var count: usize = 0;
+
+            const max_display = 20;
+            while (try iter.next()) |entry| {
+                count += 1;
+                if (count < max_display) {
+                    const stat = try dir.statFile(entry.name);
+                    if (iter.index != iter.end_index) {
+                        @branchHint(.likely);
+                        try stdout.interface.print("  ├─ ({t} {d}) {s}\n", .{ stat.kind, stat.size, entry.name });
+                    } else {
+                        try stdout.interface.print("  └─ ({t} {d}) {s}\n", .{ stat.kind, stat.size, entry.name });
+                    }
+                }
+                if (count == max_display) {
+                    try stdout.interface.print("  ...\n", .{});
+                }
+            }
+            try stdout.interface.print("  {d} children\n", .{count});
+        },
+        .file => {
+            const file = try ctx.cwd.filepathOpen(revert_info.trash_path, .{});
+            var reader = file.reader(&.{});
+            var null_detector_buffer: [1024]u8 = undefined;
+            var null_detector = try NullByteDetectorWriter.init(&null_detector_buffer);
+            _ = reader.interface.streamRemaining(&null_detector.interface) catch {};
+
+            if (null_detector.contains_null) {
+                const is_image = util.endsWithAnyIgnoreCase(revert_info.revert_path, &.{ ".png", ".gif", ".jpg", ".jpeg" });
+                if (ctx.flag_fzf_preview_viu and is_image and try util.exeExists(ctx.arena, "viu")) {
+                    var viu = std.process.Child.init(&.{
+                        "viu",
+                        "-w",
+                        "50",
+                        "-b",
+                        util.trim(revert_info.trash_path),
+                    }, ctx.arena);
+                    viu.stderr_behavior = .Ignore;
+                    viu.stdin_behavior = .Ignore;
+                    viu.stdout_behavior = .Pipe;
+                    try viu.spawn();
+                    var viu_reader = viu.stdout.?.reader(&.{});
+                    _ = try viu_reader.interface.streamRemaining(&stdout.interface);
+                    viu.stdout.?.close();
+                    viu.stdout = null;
+                    _ = try viu.wait();
+                } else {
+                    _ = try stdout.interface.write("binary data\n");
+                }
+            } else {
+                try reader.seekTo(0);
+                _ = reader.interface.streamRemaining(&stdout.interface) catch {};
+            }
+        },
     }
 }
 
@@ -279,6 +332,7 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
         };
         var child = std.process.Child.init(&.{
             "fzf",
+            "-m",
             "--preview",
             try util.fmt(ctx.arena, "trash --fzf-preview {{}} {s}", .{viu_flag}),
         }, ctx.arena);
@@ -296,9 +350,13 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
             util.log("no files reverted", .{});
             return;
         }
-        switch (fzf_mode) {
-            .Fetch => try fetchTrash(ctx, revert_path),
-            .Revert => try revertTrash(ctx, revert_path),
+
+        var iter_path = std.mem.splitScalar(u8, revert_path, '\n');
+        while (iter_path.next()) |p| {
+            switch (fzf_mode) {
+                .Fetch => try fetchTrash(ctx, p),
+                .Revert => try revertTrash(ctx, p),
+            }
         }
         return;
     }
@@ -333,7 +391,7 @@ const Context = struct {
             .cwd = WorkDir.cwd(),
             .reporter = Reporter.init(arena),
         };
-        try result.flag_parser.parse(arena);
+        try result.flag_parser.parseProcessArgs(arena);
         return result;
     }
 

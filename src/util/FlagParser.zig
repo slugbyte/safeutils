@@ -19,12 +19,12 @@ pub const ArgType = enum {
     NotPositional,
 };
 
-pub fn parse(flag_parser: *FlagParser, allocator: Allocator) !void {
-    var iter = try ArgIterator.init(allocator);
+pub fn parse(flag_parser: *FlagParser, allocator: Allocator, args: []const [:0]u8) !void {
+    var iter = ArgIterator.init(args);
     defer {
         iter.reset();
         if (!flag_parser.setArgIteratorFn(flag_parser, iter)) {
-            iter.deinit();
+            iter.deinit(allocator);
         }
     }
 
@@ -34,18 +34,22 @@ pub fn parse(flag_parser: *FlagParser, allocator: Allocator) !void {
         allocator.free(program_path);
     }
 
-    var positional = std.ArrayList([:0]const u8).empty;
-    errdefer positional.deinit(allocator);
+    var positional_list = std.ArrayList([:0]const u8).empty;
+    errdefer positional_list.deinit(allocator);
     while (iter.next()) |arg| {
         if (try flag_parser.parseFn(flag_parser, arg, &iter) == .Positional) {
-            try positional.append(allocator, try allocator.dupeZ(u8, arg));
+            try positional_list.append(allocator, try allocator.dupeZ(u8, arg));
         }
     }
 
-    const positional_list = try positional.toOwnedSlice(allocator);
-    if (!flag_parser.setPositionalListFn(flag_parser, positional_list)) {
-        allocator.free(positional_list);
+    const positional_list_owned = try positional_list.toOwnedSlice(allocator);
+    if (!flag_parser.setPositionalListFn(flag_parser, positional_list_owned)) {
+        allocator.free(positional_list_owned);
     }
+}
+
+pub fn parseProcessArgs(flag_parser: *FlagParser, allocator: Allocator) !void {
+    try parse(flag_parser, allocator, try std.process.argsAlloc(allocator));
 }
 
 pub fn noopSetProgramPath(_: *FlagParser, _: [:0]const u8) bool {

@@ -281,7 +281,7 @@ const Context = struct {
             .cwd = work_dir,
             .reporter = reporter,
         };
-        try result.flag_parser.parse(arena);
+        try result.flag_parser.parseProcessArgs(arena);
         return result;
     }
 

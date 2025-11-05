@@ -1,6 +1,6 @@
 const std = @import("std");
 
-/// convert an arg `[]const u8` into a enum
+/// iterates over each of the flags within a single arg
 /// if its a long flag `--flag` it will just parse the whole arg as an enum
 /// if its a short flag `-SiCk` it will parse each char as an enum
 pub fn FlagIterator(FlagEnum: type) type {
@@ -24,11 +24,11 @@ pub fn FlagIterator(FlagEnum: type) type {
         };
 
         pub fn init(arg: []const u8) @This() {
-            if (std.mem.startsWith(u8, arg, "--")) return .{
+            if (std.mem.startsWith(u8, arg, "--") and arg.len > 2) return .{
                 .arg = arg,
                 .is_long = true,
             };
-            if (std.mem.startsWith(u8, arg, "-")) return .{
+            if (std.mem.startsWith(u8, arg, "-") and arg.len > 1) return .{
                 .arg = arg[1..],
                 .is_long = false,
             };

@@ -6,7 +6,6 @@ const known_file = @import("./known_file.zig");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const WorkDir = @This();
-
 dir: std.fs.Dir,
 
 pub fn init(dir: std.fs.Dir) WorkDir {
@@ -78,22 +77,15 @@ pub fn trashinfoWrite(self: WorkDir, allocator: Allocator, original_path: []cons
 /// move a file, directory or sym_link to the trash
 pub fn trash(self: WorkDir, allocator: Allocator, path: []const u8, kind: std.fs.File.Kind) ![]const u8 {
     switch (kind) {
-        .file => {
+        .file, .directory, .sym_link => {
             const file_name = std.fs.path.basename(path);
-            var digest: [Sha256.digest_length]u8 = undefined;
-            try self.hashFilepathSha256(path, &digest);
-            const trash_path = try known_file.trashFilenameDigest(allocator, file_name, &digest);
-            try self.move(path, trash_path);
-            if (builtin.os.tag == .linux) {
-                try self.trashinfoWrite(allocator, path, trash_path);
-            }
-            return trash_path;
-        },
-        .directory, .sym_link => {
-            const file_name = std.fs.path.basename(path);
-            var trash_path = try known_file.trashFilenameTimestamp(allocator, file_name);
-            if (try self.exists(trash_path)) {
-                trash_path = try known_file.trashFilenameTimestampRandom(allocator, file_name);
+            var filename_bumper = known_file.FilenameBumper.parse(file_name);
+            var trash_path_sa = util.StackFilepathAllocator.empty;
+            var trash_path = try filename_bumper.fmtTrashpath(trash_path_sa.allocatorInvalidatePrevious());
+
+            while (try self.exists(trash_path)) {
+                filename_bumper.bump();
+                trash_path = try filename_bumper.fmtTrashpath(trash_path_sa.allocatorInvalidatePrevious());
             }
             try self.move(path, trash_path);
             if (builtin.os.tag == .linux) {
