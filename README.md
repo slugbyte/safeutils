@@ -43,13 +43,15 @@ trash can revert and fetch files using fzf with a custom preview that shows `rev
 if you have [viu](https://github.com/atanunq/viu) installed you can also pass a `--viu` flag so that you can see image previews (in block form).
 ```
 USAGE: trash files.. (--flags)
-  Move files to $trash.
+  Move files to the trash.
+  Revert trash fetch back to where they came from. 
+  Fetch trash files to current dir.
 
   --version                 print version
   -r --revert trash_file    (linux-only) revert a file from trash back to where it came from
   -R --revert-fzf           (linux-only) use fzf to revert a trash file
   -F --fetch-fzf            (linux-only) use fzf to fetch a trash_file to the current dir
      --viu                  add support for viu block image display in fzf preview
-  -s --silent               dont print trash paths
+  -s --silent               only print errors
   -h --help                 display help
 ```
