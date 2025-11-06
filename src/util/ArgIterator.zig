@@ -5,7 +5,7 @@ pub const ArgIterator = @This();
 
 pub const Error = error{
     MissingValue,
-    ParseFalied,
+    ParseFailed,
 } || Allocator.Error;
 
 // inner: std.process.ArgIterator,

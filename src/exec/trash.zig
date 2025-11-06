@@ -38,12 +38,7 @@ const UndoData = struct {
 pub fn main() !void {
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_instance.allocator();
-    var wat = util.known_file.FilenameBumper.parse("cool.gif");
-    wat.bump();
-    util.log("name: '{s}', count: {?d}, ext: {s}", .{ wat.name, wat.count, wat.ext });
 
-    var filename_sa = util.StackFilenameAllocator.empty;
-    util.log("trash_filename: {s}", .{try wat.fmtFilename(filename_sa.allocatorInvalidatePrevious())});
     var ctx = try Context.init(arena);
     if (builtin.mode == .Debug) ctx.debugPrint();
     if (ctx.reporter.isError()) {
@@ -130,6 +125,7 @@ pub const RevertInfo = struct {
     trash_stat: std.fs.File.Stat,
     trashinfo_path: []const u8,
     revert_path: []const u8,
+    /// if trash_stat is a link this describes where it links to
     trash_link: ?[]const u8,
 
     pub fn init(ctx: *Context, trash_name: []const u8) !RevertInfo {
@@ -243,20 +239,23 @@ pub fn fzfPreview(ctx: *Context, trash_name: []const u8) !void {
             var null_detector = try NullByteDetectorWriter.init(&null_detector_buffer);
             _ = reader.interface.streamRemaining(&null_detector.interface) catch {};
 
+            // fzf --preview doenst pass a tty as stdout so we caint use util.term.winwidth to set the
+            // viu width. my workaroud is that i pass a --viu-width flag when seting the --preview command
+            // and trash -F and -R do have access to a tty so they just get winwidth.col to pass along
+            const width = if (ctx.flag_fzf_preview_viu_width) |width| try util.fmt(ctx.arena, "{d}", .{width}) else "50";
             if (null_detector.contains_null) {
                 const is_image = util.endsWithAnyIgnoreCase(revert_info.revert_path, &.{ ".png", ".gif", ".jpg", ".jpeg" });
-                if (ctx.flag_fzf_preview_viu and is_image and try util.exeExists(ctx.arena, "viu")) {
-                    var viu = std.process.Child.init(&.{
-                        "viu",
-                        "-w",
-                        "50",
-                        "-b",
-                        util.trim(revert_info.trash_path),
-                    }, ctx.arena);
-                    viu.stderr_behavior = .Ignore;
-                    viu.stdin_behavior = .Ignore;
-                    viu.stdout_behavior = .Pipe;
-                    try viu.spawn();
+                if (ctx.flag_fzf_preview_viu and is_image and try util.exec.exists(ctx.arena, "viu")) {
+                    var viu = try util.exec.spawn(ctx.arena, .{
+                        .stdout_behavior = .Pipe,
+                        .args = &.{
+                            "viu",
+                            "-w",
+                            width,
+                            "-b",
+                            util.trim(revert_info.trash_path),
+                        },
+                    });
                     var viu_reader = viu.stdout.?.reader(&.{});
                     _ = try viu_reader.interface.streamRemaining(&stdout.interface);
                     viu.stdout.?.close();
@@ -302,45 +301,75 @@ pub fn fetchTrash(ctx: *Context, trash_name: []const u8) !void {
 
 pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
     if (builtin.os.tag != .linux) {
-        try ctx.reporter.pushError("--revert is only supported on linux", .{});
+        try ctx.reporter.pushError("--fetch and --revert are only supported on linux", .{});
     } else {
+        if (!util.term.isTTY()) {
+            try ctx.reporter.pushError("fzf needs stdout to be a tty", .{});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        }
         const trashinfo_dirpath = try util.known_file.dirpathTrashInfo(ctx.arena);
         const trash_dirpath = try util.known_file.dirpathTrash(ctx.arena);
         const trash_dir = try ctx.cwd.dir.openDir(trash_dirpath, .{ .iterate = true });
+
         var fzf_option_list = std.ArrayList(u8).empty;
         var iter = trash_dir.iterate();
-        while (try iter.next()) |entry| {
-            // only show paths that can be reverted
-            if (try ctx.cwd.exists(try std.fs.path.join(ctx.arena, &.{
+        fill_fzf_option_list: while (try iter.next()) |entry| {
+            // filter out files with non ascii names (this one had me stumped for a while)
+            for (entry.name) |char| {
+                if (!std.ascii.isAscii(char)) continue :fill_fzf_option_list;
+            }
+
+            // TODO: cleanup all the places wher im manually creating trash info paths
+            const trashinfo_path = try std.fs.path.join(ctx.arena, &.{
                 trashinfo_dirpath,
                 try util.fmt(ctx.arena, "{s}.trashinfo", .{entry.name}),
-            }))) {
+            });
+
+            if (try ctx.cwd.exists(trashinfo_path)) {
                 try fzf_option_list.appendSlice(ctx.arena, entry.name);
                 try fzf_option_list.append(ctx.arena, '\n');
             }
         }
-        const viu_flag = blk: {
+
+        const winsize = try util.term.winsize();
+        const fzf_prompt = switch (fzf_mode) {
+            .Fetch => "fetch> ",
+            .Revert => "revert> ",
+        };
+        const preview_horizontal = winsize.col < 170;
+        const preview_command_viu_flags: []const u8 = blk: {
             if (ctx.flag_fzf_preview_viu) {
-                if (!(try util.exeExists(ctx.arena, "viu"))) {
+                if (!(try util.exec.exists(ctx.arena, "viu"))) {
                     try ctx.reporter.pushError("--viu set but viu executable not found", .{});
                     ctx.reporter.EXIT_WITH_REPORT(1);
                 }
-                break :blk "--viu";
+                const viu_width_default: usize = if (preview_horizontal) winsize.col else @intFromFloat(@as(f32, @floatFromInt(winsize.col)) * 0.6);
+                const viu_width = ctx.flag_fzf_preview_viu_width orelse viu_width_default;
+                break :blk try util.fmt(ctx.arena, "--viu --viu-width {d}", .{viu_width});
             } else {
                 break :blk "";
             }
         };
-        var child = std.process.Child.init(&.{
-            "fzf",
-            "-m",
-            "--preview",
-            try util.fmt(ctx.arena, "trash --fzf-preview {{}} {s}", .{viu_flag}),
-        }, ctx.arena);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Inherit;
-        _ = try child.spawn();
-        try child.stdin.?.writeAll(fzf_option_list.items);
+        const preview_command = try util.fmt(ctx.arena, "trash --fzf-preview {{}} {s}", .{preview_command_viu_flags});
+        const preview_window_default = if (preview_horizontal) "top:80%" else "right:60%";
+        const preview_window = ctx.flag_fzf_preview_window orelse preview_window_default;
+        var child = try util.exec.spawn(ctx.arena, .{
+            .stdin_behavior = .Pipe,
+            .stdout_behavior = .Pipe,
+            .args = &.{
+                "fzf",
+                "-m",
+                "--style",
+                "minimal",
+                "--prompt",
+                fzf_prompt,
+                "--preview",
+                preview_command,
+                "--preview-window",
+                preview_window,
+            },
+        });
+        try child.stdin.?.writeAll(std.mem.trimEnd(u8, fzf_option_list.items, "\n"));
         child.stdin.?.close();
         child.stdin = null;
         const revert_path = util.trim(try child.stdout.?.readToEndAlloc(ctx.arena, std.fs.max_path_bytes));
@@ -376,6 +405,8 @@ const Context = struct {
     flag_fetch_fzf: bool = false,
     flag_fzf_preview: ?[:0]const u8 = null,
     flag_fzf_preview_viu: bool = false,
+    flag_fzf_preview_viu_width: ?usize = null,
+    flag_fzf_preview_window: ?[:0]const u8 = null,
     flag_version: bool = false,
     flag_silent: bool = false,
     flag_parser: FlagParser = .{
@@ -419,7 +450,9 @@ const Context = struct {
         @"--revert-fzf",
         R,
         @"--fzf-preview",
+        @"--fzf-preview-window",
         @"--viu",
+        @"--viu-width",
     };
 
     pub fn implParseFn(flag_parser: *FlagParser, arg: [:0]const u8, iter: *util.ArgIterator) FlagParser.Error!FlagParser.ArgType {
@@ -453,7 +486,13 @@ const Context = struct {
                                 try self.reporter.pushError("--fzf-preview value missing", .{});
                             }
                         },
+                        .@"--fzf-preview-window" => {
+                            self.flag_fzf_preview_window = iter.next();
+                        },
                         .@"--viu" => self.flag_fzf_preview_viu = true,
+                        .@"--viu-width" => {
+                            self.flag_fzf_preview_viu_width = iter.nextInt(usize, 10) catch null;
+                        },
                     }
                 },
                 .UnknownLong => |unknown_long| {

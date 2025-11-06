@@ -3,6 +3,8 @@ const std = @import("std");
 
 pub const env = @import("./util/env.zig");
 pub const known_file = @import("./util/known_file.zig");
+pub const term = @import("./util/term.zig");
+pub const exec = @import("./util/exec.zig");
 
 pub const ArgIterator = @import("./util/ArgIterator.zig");
 pub const FlagIterator = @import("./util/FlagIterator.zig").FlagIterator;
@@ -24,21 +26,6 @@ pub fn log(comptime format: []const u8, arg: anytype) void {
     var buffer: [1024]u8 = undefined;
     const msg = std.fmt.bufPrint(&buffer, format, arg) catch return;
     std.debug.print("{s}\n", .{msg});
-}
-
-pub fn exeExists(allocator: Allocator, exe_name: []const u8) !bool {
-    var child = std.process.Child.init(&.{ "which", exe_name }, allocator);
-    child.stderr_behavior = .Ignore;
-    child.stdout_behavior = .Ignore;
-    child.stdin_behavior = .Ignore;
-    try child.spawn();
-
-    switch (try child.wait()) {
-        .Exited => |status| {
-            return status == 0;
-        },
-        else => return error.UnexpectedTerm,
-    }
 }
 
 pub fn isString(T: type) bool {

@@ -91,7 +91,7 @@ pub fn trash(self: WorkDir, allocator: Allocator, path: []const u8, kind: std.fs
             if (builtin.os.tag == .linux) {
                 try self.trashinfoWrite(allocator, path, trash_path);
             }
-            return trash_path;
+            return allocator.dupe(u8, trash_path);
         },
         else => {
             return error.TrashFileKindNotSupported;
