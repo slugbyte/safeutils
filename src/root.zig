@@ -2,9 +2,10 @@
 const std = @import("std");
 
 pub const env = @import("./util/env.zig");
-pub const known_file = @import("./util/known_file.zig");
+pub const dirpath = @import("./util/dirpath.zig");
 pub const term = @import("./util/term.zig");
 pub const exec = @import("./util/exec.zig");
+pub const trashinfo = @import("./util/trashinfo.zig");
 
 pub const ArgIterator = @import("./util/ArgIterator.zig");
 pub const FlagIterator = @import("./util/FlagIterator.zig").FlagIterator;
@@ -15,7 +16,7 @@ pub const NullByteDetectorWriter = @import("./util/NullByteDetectorWriter.zig");
 pub const StackAllocator = @import("./util/StackAllocator.zig").StackAllocator;
 pub const StackFilenameAllocator = @import("./util/StackAllocator.zig").StackFilenameAllocator;
 pub const StackFilepathAllocator = @import("./util/StackAllocator.zig").StackFilepathAllocator;
-
+pub const FilenameBumper = @import("./util/FilenameBumper.zig");
 pub const FilepathBuffer = [std.fs.max_path_bytes]u8;
 pub const FilenameBuffer = [std.fs.max_path_bytes]u8;
 
@@ -125,6 +126,12 @@ pub inline fn endsWithAnyIgnoreCase(haystack: []const u8, needles: []const []con
         }
     }
     return false;
+}
+
+pub fn debug(src: std.builtin.SourceLocation, comptime format: []const u8, args: anytype) void {
+    std.debug.print("DEBUG ({d}:{s} {s}) ", .{ src.line, src.file, src.fn_name });
+    std.debug.print(format, args);
+    std.debug.print("\n", .{});
 }
 
 /// prints "{header}: 'item0' 'item1' ...\n"

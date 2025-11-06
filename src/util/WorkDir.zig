@@ -1,7 +1,8 @@
 const std = @import("std");
 const util = @import("../root.zig");
 const builtin = @import("builtin");
-const known_file = @import("./known_file.zig");
+const FilenameBumper = @import("./FilenameBumper.zig");
+const dirpath = @import("./dirpath.zig");
 
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -46,32 +47,12 @@ pub fn trashinfoWrite(self: WorkDir, allocator: Allocator, original_path: []cons
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    const trashinfo_dirpath = try known_file.dirpathTrashInfo(arena);
-    const trashinfo_name = try util.fmt(arena, "{s}.trashinfo", .{std.fs.path.basename(trash_path)});
-    const trashinfo_filepath = try std.fs.path.join(arena, &.{
-        trashinfo_dirpath,
-        trashinfo_name,
-    });
-
-    const cwd_path = try self.dir.realpathAlloc(arena, ".");
-    const absoltue_original_path = blk_a: {
-        if (std.fs.path.isAbsolute(original_path)) {
-            break :blk_a original_path;
-        } else {
-            break :blk_a try std.fs.path.resolve(arena, &.{ cwd_path, original_path });
-        }
-    };
-
+    const trashinfo_filepath = try util.trashinfo.filepath(arena, std.fs.path.basename(trash_path));
     const file = try self.dir.createFile(trashinfo_filepath, .{});
     defer file.close();
     var buffer: [1024]u8 = undefined;
     var writer = file.writer(&buffer);
-    // TODO: add date?
-    try writer.interface.print(
-        \\[Trash Info]
-        \\Path={s}
-    , .{absoltue_original_path});
-    try writer.interface.flush();
+    try util.trashinfo.writeContent(&writer.interface, original_path);
 }
 
 /// move a file, directory or sym_link to the trash
@@ -79,13 +60,17 @@ pub fn trash(self: WorkDir, allocator: Allocator, path: []const u8, kind: std.fs
     switch (kind) {
         .file, .directory, .sym_link => {
             const file_name = std.fs.path.basename(path);
-            var filename_bumper = known_file.FilenameBumper.parse(file_name);
+
+            var trash_dirpath_sa = util.StackFilepathAllocator.empty;
+            const trash_dirpath = try dirpath.trash(trash_dirpath_sa.allocatorInvalidatePrevious());
+
+            var filename_bumper = FilenameBumper.parse(file_name);
             var trash_path_sa = util.StackFilepathAllocator.empty;
-            var trash_path = try filename_bumper.fmtTrashpath(trash_path_sa.allocatorInvalidatePrevious());
+            var trash_path = try filename_bumper.fmtFilepath(trash_path_sa.allocatorInvalidatePrevious(), trash_dirpath);
 
             while (try self.exists(trash_path)) {
                 filename_bumper.bump();
-                trash_path = try filename_bumper.fmtTrashpath(trash_path_sa.allocatorInvalidatePrevious());
+                trash_path = try filename_bumper.fmtFilepath(trash_path_sa.allocatorInvalidatePrevious(), trash_dirpath);
             }
             try self.move(path, trash_path);
             if (builtin.os.tag == .linux) {

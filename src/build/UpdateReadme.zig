@@ -28,7 +28,7 @@ pub fn make(b: *std.Build.Step, opt: std.Build.Step.MakeOptions) !void {
     const move_help_msg = @import("../exec/move.zig").help_msg;
     const trash_help_msg = @import("../exec/trash.zig").help_msg;
 
-    try writer.interface.print(README_CONTENT, .{ move_help_msg, trash_help_msg });
+    try writer.interface.print(README_CONTENT, .{ trash_help_msg, move_help_msg });
     try writer.interface.flush();
 }
 
@@ -40,24 +40,20 @@ const README_CONTENT =
     \\I lost work one too many times, by accidently overwriting data with coreutils. I made these utils to
     \\reduce the chances that would happen again. They provide much less dangerous clobber strats.
     \\ 
-    \\### trash clobber strategy
-    \\* move files to trash but rename them so they dont confict
-    \\* if on `linux` it also adds a `.trashinfo` file so that you can undo using a file browser
-    \\* files become `$trash/(basename)__(url_safe_base64_hash).trash`
-    \\* dirs and links become `$trash/(basename)__(timestamp).trash` or `$trash/(basename)__(timestap)_(random).trash` if there is a conflict.
+    \\### clobber strats
+    \\* `trash` - move files to trash but rename them so they dont confict `_00.ext, _01.ext, _02.ext ..`
+    \\* `backup` -  move original file to `(original_path).backup~`
+    \\   * if a backup allready exists it will be moved to trash
     \\
-    \\### backup clobber strategy
-    \\* rename file `(original_path).backup~`
-    \\* if a backup allready exists it will be moved to trash
-    \\
-    \\## move (mv replacement)
+    \\## trash (rm replacement)
+    \\'--revert-fzf' and '--fetch-fzf' have a custom [fzf](https://github.com/junegunn/fzf) preview for displaying:
+    \\* A header with the original path, file type, and file size.
+    \\* File content: text is printed, non-text prints `binary data` except images can optionaly be displayed with [viu](https://github.com/atanunq/viu)
     \\```
     \\{s}
     \\```
     \\
-    \\## trash (rm replacement)
-    \\trash can revert and fetch files using fzf with a custom preview that shows `revert_path`, `stat_kind`, `file_size` and `content`.
-    \\if you have [viu](https://github.com/atanunq/viu) installed you can also pass a `--viu` flag so that you can see image previews (in block form).
+    \\## move (mv replacement)
     \\```
     \\{s}
     \\```

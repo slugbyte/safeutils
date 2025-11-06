@@ -15,13 +15,23 @@ pub const help_msg =
     \\  Revert trash fetch back to where they came from. 
     \\  Fetch trash files to current dir.
     \\
-    \\  --version                 print version
-    \\  -r --revert trash_file    (linux-only) revert a file from trash back to where it came from
-    \\  -R --revert-fzf           (linux-only) use fzf to revert a trash file
-    \\  -F --fetch-fzf            (linux-only) use fzf to fetch a trash_file to the current dir
-    \\     --viu                  add support for viu block image display in fzf preview
-    \\  -s --silent               only print errors
-    \\  -h --help                 display help
+    \\  REVERT/FETCH: (linux-only)
+    \\  -r --revert trashfile     Revert a file from trash back to where it came from
+    \\  -R --revert-fzf           Use fzf to revert a trash file
+    \\  -F --fetch-fzf            Use fzf to fetch a trash_file to the current dir
+    \\ 
+    \\  FZF PREVIEW OPTIONS: (combine with --revert-fzf --fetch-fzf)
+    \\  --viu                  Add support for viu block image display in fzf preview.
+    \\  --viu-width            Overwrite the width viu images are displated at.
+    \\  --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
+    \\
+    \\  -s --silent               Only print errors.
+    \\  -V --version              Print version.
+    \\  -h --help                 Display this help.
+    \\ 
+    \\  OPTIONAL DEPS:
+    \\  fzf: https://github.com/junegunn/fzf (fuzzy find)
+    \\  viu: https://github.com/atanunq/viu  (image preview)
 ;
 
 const FZFMode = enum {
@@ -130,8 +140,8 @@ pub const RevertInfo = struct {
 
     pub fn init(ctx: *Context, trash_name: []const u8) !RevertInfo {
         const basename = std.fs.path.basename(trash_name);
-        const trash_dirpath = try util.known_file.dirpathTrash(ctx.arena);
-        const trashinfo_dirpath = try util.known_file.dirpathTrashInfo(ctx.arena);
+        const trash_dirpath = try util.dirpath.trash(ctx.arena);
+        const trashinfo_dirpath = try util.dirpath.trashInfo(ctx.arena);
         const trash_path = try std.fs.path.join(ctx.arena, &.{
             trash_dirpath,
             basename,
@@ -307,8 +317,8 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
             try ctx.reporter.pushError("fzf needs stdout to be a tty", .{});
             ctx.reporter.EXIT_WITH_REPORT(1);
         }
-        const trashinfo_dirpath = try util.known_file.dirpathTrashInfo(ctx.arena);
-        const trash_dirpath = try util.known_file.dirpathTrash(ctx.arena);
+        const trashinfo_dirpath = try util.dirpath.trashInfo(ctx.arena);
+        const trash_dirpath = try util.dirpath.trash(ctx.arena);
         const trash_dir = try ctx.cwd.dir.openDir(trash_dirpath, .{ .iterate = true });
 
         var fzf_option_list = std.ArrayList(u8).empty;
