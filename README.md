@@ -5,15 +5,39 @@
 I lost work one too many times, by accidently overwriting data with coreutils. I made these utils to
 reduce the chances that would happen again. They provide much less dangerous clobber strats.
  
-### trash clobber strategy
-* move files to trash but rename them so they dont confict
-* if on `linux` it also adds a `.trashinfo` file so that you can undo using a file browser
-* files become `$trash/(basename)__(url_safe_base64_hash).trash`
-* dirs and links become `$trash/(basename)__(timestamp).trash` or `$trash/(basename)__(timestap)_(random).trash` if there is a conflict.
+### clobber strats
+* `trash` - move files to trash but rename them so they dont confict `_00.ext, _01.ext, _02.ext ..`
+* `backup` -  move original file to `(original_path).backup~`
+   * if a backup allready exists it will be moved to trash
 
-### backup clobber strategy
-* rename file `(original_path).backup~`
-* if a backup allready exists it will be moved to trash
+## trash (rm replacement)
+'--revert-fzf' and '--fetch-fzf' have a custom [fzf](https://github.com/junegunn/fzf) preview for displaying:
+* A header with the original path, file type, and file size.
+* File content: text is printed, non-text prints `binary data` except images can optionaly be displayed with [viu](https://github.com/atanunq/viu)
+```
+USAGE: trash files.. (--flags)
+  Move files to the trash.
+  Revert trash fetch back to where they came from. 
+  Fetch trash files to current dir.
+
+  REVERT/FETCH: (linux-only)
+  -r --revert trashfile     Revert a file from trash back to where it came from
+  -R --revert-fzf           Use fzf to revert a trash file
+  -F --fetch-fzf            Use fzf to fetch a trash_file to the current dir
+ 
+  FZF PREVIEW OPTIONS: (combine with --revert-fzf --fetch-fzf)
+  --viu                  Add support for viu block image display in fzf preview.
+  --viu-width            Overwrite the width viu images are displated at.
+  --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
+
+  -s --silent               Only print errors.
+  -V --version              Print version.
+  -h --help                 Display this help.
+ 
+  OPTIONAL DEPS:
+  fzf: https://github.com/junegunn/fzf (fuzzy find)
+  viu: https://github.com/atanunq/viu  (image preview)
+```
 
 ## move (mv replacement)
 ```
@@ -36,22 +60,4 @@ Usage: move src.. dest (--flags)
     -r --rename   just replace the basename with dest
     -s --silent   only print errors
     -h --help     print this help
-```
-
-## trash (rm replacement)
-trash can revert and fetch files using fzf with a custom preview that shows `revert_path`, `stat_kind`, `file_size` and `content`.
-if you have [viu](https://github.com/atanunq/viu) installed you can also pass a `--viu` flag so that you can see image previews (in block form).
-```
-USAGE: trash files.. (--flags)
-  Move files to the trash.
-  Revert trash fetch back to where they came from. 
-  Fetch trash files to current dir.
-
-  --version                 print version
-  -r --revert trash_file    (linux-only) revert a file from trash back to where it came from
-  -R --revert-fzf           (linux-only) use fzf to revert a trash file
-  -F --fetch-fzf            (linux-only) use fzf to fetch a trash_file to the current dir
-     --viu                  add support for viu block image display in fzf preview
-  -s --silent               only print errors
-  -h --help                 display help
 ```
