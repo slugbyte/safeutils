@@ -2,12 +2,15 @@
 > coreutil replacements that aim to protect me from overwriting work.
 
 ## About
-I lost work one too many times, by accidently overwriting data with coreutils. I made these utils to
-reduce the chances that would happen again. They provide much less dangerous clobber strats.
- 
-### Clobber Strats
-* `trash` - move files to trash but rename conflicts `(name)_00.(ext) (name)_01.(ext)...`
-* `backup` -  rename original file to `(original).backup~` and trash any previous backups.
+I lost work by accident one to many times, so I decided to make some safe replacements and added
+a few nice modern features for fun.
+
+## Features
+* Verbose by default
+* Safe clobber strategys
+  * `trash` - move files to trash but rename conflicts `(name)_00.(ext) (name)_01.(ext)...`
+  * `backup` -  rename original file to `(original).backup~` and trash any previous backups.
+* `trash` can use [fzf](https://github.com/junegunn/fzf) to revert and fetch trashed files, and provieds a nice trash previewer.
 
 ## trash (rm replacement)
 `--revert-fzf` and `--fetch-fzf` have a custom [fzf](https://github.com/junegunn/fzf) preview with...
@@ -19,16 +22,21 @@ USAGE: trash files.. (--flags)
   Revert trash fetch back to where they came from. 
   Fetch trash files to current dir.
 
-  REVERT/FETCH: (linux-only)
-  -r --revert trashfile     Revert a file from trash back to where it came from
-  -R --revert-fzf           Use fzf to revert a trash file
-  -F --fetch-fzf            Use fzf to fetch a trash_file to the current dir
- 
-  FZF PREVIEW OPTIONS: (combine with --revert-fzf --fetch-fzf)
-  --viu                  Add support for viu block image display in fzf preview.
-  --viu-width            Overwrite the width viu images are displated at.
-  --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
+  Revert and Fetch: (linux-only)
+    -r --revert trashfile     Revert a trash file to its original location.
+    -f --fetch  trashfile     Fetch a trash file to the current directory.
+                              Fetch and Revert also manage .trashinfo files.
 
+    FZF: 
+    -R --revert-fzf           Use fzf to revert a trash file. 
+    -F --fetch-fzf            Use fzf to fetch a trash file to the current dir.
+
+    FZF Preview Options: (Combine with --revert-fzf or --fetch-fzf)
+    --viu                  Add support for viu block image display in fzf preview.
+    --viu-width            Overwrite the width viu images are displated at.
+    --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
+
+  Other Flags:
   -s --silent               Only print errors.
   -V --version              Print version.
   -h --help                 Display this help.
@@ -48,15 +56,20 @@ Usage: move src.. dest (--flags)
   Move will not partially move src.. paths. Everyting must move or nothing will move.
 
   Clobber Style:
-    (default)  error with warning
-    -t --trash    move to $trash
-    -b --backup   rename the dest file
+    (default)     Print error and exit
+    -t --trash    Move original dest to trash
+    -b --backup   Rename original dest (original).backup~
 
-    If mulitiple clober flags the presidence is (backup > trash > no clobber).
-  
+    If both clober flags are found it choose backup over trash.
+
+  Rename:
+    -r --rename   Replace only the src basename with dest. 
+                  Only works with one src path.
+    example:
+      ($ move --rename /example/oldname.zig newname.zig) results in /example/newname.zig
+
   Other Flags:
-    --version     print version
-    -r --rename   just replace the basename with dest
-    -s --silent   only print errors
-    -h --help     print this help
+    -s --silent   Only print errors
+    -V --version  Print version
+    -h --help     Print this help
 ```

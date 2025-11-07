@@ -37,12 +37,15 @@ const README_CONTENT =
     \\> coreutil replacements that aim to protect me from overwriting work.
     \\
     \\## About
-    \\I lost work one too many times, by accidently overwriting data with coreutils. I made these utils to
-    \\reduce the chances that would happen again. They provide much less dangerous clobber strats.
-    \\ 
-    \\### Clobber Strats
-    \\* `trash` - move files to trash but rename conflicts `(name)_00.(ext) (name)_01.(ext)...`
-    \\* `backup` -  rename original file to `(original).backup~` and trash any previous backups.
+    \\I lost work by accident one to many times, so I decided to make some safe replacements and added
+    \\a few nice modern features for fun.
+    \\
+    \\## Features
+    \\* Verbose by default
+    \\* Safe clobber strategys
+    \\  * `trash` - move files to trash but rename conflicts `(name)_00.(ext) (name)_01.(ext)...`
+    \\  * `backup` -  rename original file to `(original).backup~` and trash any previous backups.
+    \\* `trash` can use [fzf](https://github.com/junegunn/fzf) to revert and fetch trashed files, and provieds a nice trash previewer.
     \\
     \\## trash (rm replacement)
     \\`--revert-fzf` and `--fetch-fzf` have a custom [fzf](https://github.com/junegunn/fzf) preview with...

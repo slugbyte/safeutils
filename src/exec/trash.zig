@@ -15,16 +15,21 @@ pub const help_msg =
     \\  Revert trash fetch back to where they came from. 
     \\  Fetch trash files to current dir.
     \\
-    \\  REVERT/FETCH: (linux-only)
-    \\  -r --revert trashfile     Revert a file from trash back to where it came from
-    \\  -R --revert-fzf           Use fzf to revert a trash file
-    \\  -F --fetch-fzf            Use fzf to fetch a trash_file to the current dir
-    \\ 
-    \\  FZF PREVIEW OPTIONS: (combine with --revert-fzf --fetch-fzf)
-    \\  --viu                  Add support for viu block image display in fzf preview.
-    \\  --viu-width            Overwrite the width viu images are displated at.
-    \\  --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
+    \\  Revert and Fetch: (linux-only)
+    \\    -r --revert trashfile     Revert a trash file to its original location.
+    \\    -f --fetch  trashfile     Fetch a trash file to the current directory.
+    \\                              Fetch and Revert also manage .trashinfo files.
     \\
+    \\    FZF: 
+    \\    -R --revert-fzf           Use fzf to revert a trash file. 
+    \\    -F --fetch-fzf            Use fzf to fetch a trash file to the current dir.
+    \\
+    \\    FZF Preview Options: (Combine with --revert-fzf or --fetch-fzf)
+    \\    --viu                  Add support for viu block image display in fzf preview.
+    \\    --viu-width            Overwrite the width viu images are displated at.
+    \\    --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
+    \\
+    \\  Other Flags:
     \\  -s --silent               Only print errors.
     \\  -V --version              Print version.
     \\  -h --help                 Display this help.

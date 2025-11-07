@@ -21,17 +21,22 @@ pub const help_msg =
     \\  Move will not partially move src.. paths. Everyting must move or nothing will move.
     \\
     \\  Clobber Style:
-    \\    (default)  error with warning
-    \\    -t --trash    move to $trash
-    \\    -b --backup   rename the dest file
+    \\    (default)     Print error and exit
+    \\    -t --trash    Move original dest to trash
+    \\    -b --backup   Rename original dest (original).backup~
     \\
-    \\    If mulitiple clober flags the presidence is (backup > trash > no clobber).
-    \\  
+    \\    If both clober flags are found it choose backup over trash.
+    \\
+    \\  Rename:
+    \\    -r --rename   Replace only the src basename with dest. 
+    \\                  Only works with one src path.
+    \\    example:
+    \\      ($ move --rename /example/oldname.zig newname.zig) results in /example/newname.zig
+    \\
     \\  Other Flags:
-    \\    --version     print version
-    \\    -r --rename   just replace the basename with dest
-    \\    -s --silent   only print errors
-    \\    -h --help     print this help
+    \\    -s --silent   Only print errors
+    \\    -V --version  Print version
+    \\    -h --help     Print this help
 ;
 
 pub fn main() !void {
