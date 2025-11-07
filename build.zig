@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
 
     const exe_list = [_][]const u8{
         "move",
+        "copy",
         "trash",
     };
 

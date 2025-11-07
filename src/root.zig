@@ -22,6 +22,7 @@ pub const FilenameBuffer = [std.fs.max_path_bytes]u8;
 
 pub const Allocator = std.mem.Allocator;
 pub const assert = std.debug.assert;
+pub const panic = std.debug.panic;
 
 pub fn log(comptime format: []const u8, arg: anytype) void {
     var buffer: [1024]u8 = undefined;
@@ -140,7 +141,7 @@ pub fn debugPrintArgIterator(arg_iterator: *ArgIterator, header: []const u8, ski
     if (skip_exe) {
         _ = arg_iterator.skip();
     }
-    std.debug.print("{s}: ", .{header});
+    std.debug.print("{s: <12} ", .{header});
     while (arg_iterator.next()) |arg| {
         std.debug.print("'{s}' ", .{arg});
     }
@@ -149,7 +150,7 @@ pub fn debugPrintArgIterator(arg_iterator: *ArgIterator, header: []const u8, ski
 
 /// prints "{header}: 'item0' 'item1' ...\n"
 pub fn debugPrintPositionalList(positional_list: [][:0]const u8, header: []const u8) void {
-    std.debug.print("{s}: ", .{header});
+    std.debug.print("{s: <12} ", .{header});
     for (positional_list) |arg| {
         std.debug.print("'{s}' ", .{arg});
     }
@@ -161,7 +162,7 @@ pub fn debugPrintFlagFields(comptime T: type, value: T) void {
     const info = @typeInfo(T);
     inline for (info.@"struct".fields) |field| {
         if (std.mem.startsWith(u8, field.name, "flag_") and std.mem.indexOf(u8, field.name, "parser") == null) {
-            std.debug.print("{s: <30}: {any}\n", .{ field.name, @field(value, field.name) });
+            std.debug.print("{s: <30} {any}\n", .{ field.name ++ ":", @field(value, field.name) });
         }
     }
 }

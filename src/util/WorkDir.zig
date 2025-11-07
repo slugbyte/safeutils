@@ -33,6 +33,39 @@ pub fn stat(self: WorkDir, path: []const u8) !?std.fs.File.Stat {
     };
 }
 
+/// modified version of dir.statFile but added SYMLIN_NOFOLLOW an null instead of File not Foound (also only linux/posix)
+pub fn statNoFollow(self: WorkDir, sub_path: []const u8) !?std.fs.File.Stat {
+    const Stat = std.fs.File.Stat;
+    const linux = std.os.linux;
+    if (builtin.os.tag == .linux) {
+        const sub_path_c = try std.posix.toPosixPath(sub_path);
+        var stx = std.mem.zeroes(linux.Statx);
+
+        const rc = linux.statx(
+            self.dir.fd,
+            &sub_path_c,
+            linux.AT.NO_AUTOMOUNT | linux.AT.SYMLINK_NOFOLLOW,
+            linux.STATX_TYPE | linux.STATX_MODE | linux.STATX_ATIME | linux.STATX_MTIME | linux.STATX_CTIME,
+            &stx,
+        );
+
+        return switch (linux.E.init(rc)) {
+            .SUCCESS => Stat.fromLinux(stx),
+            .ACCES => error.AccessDenied,
+            .BADF => unreachable,
+            .FAULT => unreachable,
+            .INVAL => unreachable,
+            .LOOP => error.SymLinkLoop,
+            .NAMETOOLONG => unreachable, // Handled by posix.toPosixPath() above.
+            .NOMEM => error.SystemResources,
+            .NOENT, .NOTDIR => null, // error.FileNotFound,
+            else => |err| std.posix.unexpectedErrno(err),
+        };
+    }
+    const st = try std.posix.fstatat(self.dir.fd, sub_path, std.posix.AT.SYMLINK_NOFOLLOW);
+    return Stat.fromPosix(st);
+}
+
 /// consiter using stat instead
 /// checks if a path exists
 pub fn exists(self: WorkDir, path: []const u8) !bool {
