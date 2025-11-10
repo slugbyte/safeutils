@@ -14,21 +14,27 @@ const ArgIterator = util.ArgIterator;
 // CLOBBER IF NEEDED
 // EXECUTE
 
-const help =
+pub const help_msg =
     \\Usage: copy src.. dest (--flags)
-    \\  Copy a file, multiple files, or a directory to a destination.
-    \\  When copying files into a directory dest must have a '/' at the end.
-    \\
-    \\  When copying multiple src files, it will error if they end up having a conflicting destination.
+    \\  Copy a files and a directories.
     \\  
     \\  -d --dir             dirs copy recursively, and cobber conflicts
-    \\                       --dir can only have one src if clobbering dest
     \\  -m --merge           dirs copy recursively, but src_dirs dont clobber dest_dirs
-    \\                       when merging src dirs files from later args overwrite files form earlier args   
-    \\                       --merge can only merge with dest if all src paths are dirs
     \\  -t --trash           trash conflicting files
     \\  -c --create          create dest dir if not exists
     \\  -b --backup          backup conflicting files
+    \\ 
+    \\  -s --silent          only print errors
+    \\  -v --version         print this version
+    \\  -h --help            print this version
+    \\ 
+    \\  EXAMPLES:
+    \\  copy boom.zig bap.zig     Copy boom.zig to bap.zig
+    \\  copy -dt util src         Trash src and replace with util(dir)
+    \\  copy -db util src/        Copy util to src/util (backup src/util if exists)
+    \\  copy -mb util test src    Merge util and test dirs with src dir (make backups of conflicts)
+    \\  copy -mt util test src/   Copy test and util into src (src/util src/test) (trash non dir-on-dir conflicts)
+    \\  copy -c **.png img        Create img dir and put all the pngs in it.      
 ;
 
 pub fn main() !void {
@@ -39,7 +45,7 @@ pub fn main() !void {
     }
 
     if (ctx.flag_help) {
-        util.log("{s}", .{help});
+        util.log("{s}", .{help_msg});
         ctx.reporter.EXIT_WITH_REPORT(0);
     }
 

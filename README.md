@@ -46,6 +46,30 @@ USAGE: trash files.. (--flags)
   viu: https://github.com/atanunq/viu  (image preview)
 ```
 
+## copy (cp replacement)
+```
+Usage: copy src.. dest (--flags)
+  Copy a files and a directories.
+  
+  -d --dir             dirs copy recursively, and cobber conflicts
+  -m --merge           dirs copy recursively, but src_dirs dont clobber dest_dirs
+  -t --trash           trash conflicting files
+  -c --create          create dest dir if not exists
+  -b --backup          backup conflicting files
+ 
+  -s --silent          only print errors
+  -v --version         print this version
+  -h --help            print this version
+ 
+  EXAMPLES:
+  copy boom.zig bap.zig     Copy boom.zig to bap.zig
+  copy -dt util src         Trash src and replace with util(dir)
+  copy -db util src/        Copy util to src/util (backup src/util if exists)
+  copy -mb util test src    Merge util and test dirs with src dir (make backups of conflicts)
+  copy -mt util test src/   Copy test and util into src (src/util src/test) (trash non dir-on-dir conflicts)
+  copy -c **.png img        Create img dir and put all the pngs in it.      
+```
+
 ## move (mv replacement)
 ```
 Usage: move src.. dest (--flags)

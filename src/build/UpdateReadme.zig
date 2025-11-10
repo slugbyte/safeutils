@@ -27,8 +27,9 @@ pub fn make(b: *std.Build.Step, opt: std.Build.Step.MakeOptions) !void {
 
     const move_help_msg = @import("../exec/move.zig").help_msg;
     const trash_help_msg = @import("../exec/trash.zig").help_msg;
+    const copy_help_msg = @import("../exec/copy.zig").help_msg;
 
-    try writer.interface.print(README_CONTENT, .{ trash_help_msg, move_help_msg });
+    try writer.interface.print(README_CONTENT, .{ trash_help_msg, copy_help_msg, move_help_msg });
     try writer.interface.flush();
 }
 
@@ -51,6 +52,11 @@ const README_CONTENT =
     \\`--revert-fzf` and `--fetch-fzf` have a custom [fzf](https://github.com/junegunn/fzf) preview with...
     \\* A header section with the `original path`, `file type`, and `file size`.
     \\* A content section where text is printed, non-text prints `binary data` except images can optionaly be displayed with [viu](https://github.com/atanunq/viu)
+    \\```
+    \\{s}
+    \\```
+    \\
+    \\## copy (cp replacement)
     \\```
     \\{s}
     \\```
