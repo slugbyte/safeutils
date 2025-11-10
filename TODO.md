@@ -1,4 +1,7 @@
 # TODO
+* `copy` should stat dest not statNoFollow on `--merge`
+  * or maby there should be a -S --symlink or something
+
 * `build -Djj_ref='@-'` so you can choose jj ref build time (build/commit/desc)
 * trash `--cleanup` 
   * remove borked `.trashinfo` files

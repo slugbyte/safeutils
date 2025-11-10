@@ -30,9 +30,9 @@ pub const help_msg =
     \\ 
     \\  EXAMPLES:
     \\  copy boom.zig bap.zig     Copy boom.zig to bap.zig
-    \\  copy -dt util src         Trash src and replace with util(dir)
+    \\  copy -dt util src         Copy util to src (trash src if exists)
     \\  copy -db util src/        Copy util to src/util (backup src/util if exists)
-    \\  copy -mb util test src    Merge util and test dirs with src dir (make backups of conflicts)
+    \\  copy -m util test src     Merge util and test dirs into src dir (error if conflicts)
     \\  copy -mt util test src/   Copy test and util into src (src/util src/test) (trash non dir-on-dir conflicts)
     \\  copy -c **.png img        Create img dir and put all the pngs in it.      
 ;
@@ -152,20 +152,24 @@ pub fn main() !void {
 
             if (ctx.flag_dir_style == .Dir and ctx.flag_clobber_style != .NoClobber and !should_join_src_to_dest and src_input.len > 1) {
                 try ctx.reporter.pushError("--dir can only have one src file if dest is clobbered. add '/' or user --merge", .{});
+                try ctx.reporter.EXIT_WITH_REPORT(1);
             }
 
-            // QUESTION: Should this be ok? when do i even what to do this? maby i should limit merge dirs clobbering dest to 1
+            // QUESTION: maby i should limit merge dirs clobbering dest to 1? when would this even be useful? seems foot-gunny
             if (ctx.flag_dir_style == .Merge and !should_join_src_to_dest and src_input.len != dir_count) {
                 try ctx.reporter.pushError("merge only works if all src paths are dirs", .{});
+                try ctx.reporter.EXIT_WITH_REPORT(1);
             }
 
             for (copy_list.items, 0..) |item_a, i| {
-                for (i + 1..copy_list.items.len) |j| {
-                    const item_b = copy_list.items[j];
+                for (copy_list.items[i + 1 ..]) |item_b| {
                     if (try ctx.cwd.isPathSameLocation(item_a.dest, item_b.dest)) {
                         try ctx.reporter.pushError("src items have conflicting destination: {s} and {s}", .{ item_a.src, item_b.src });
                     }
                 }
+            }
+            if (ctx.reporter.isError()) {
+                ctx.reporter.EXIT_WITH_REPORT(1);
             }
 
             for (copy_list.items) |item| {
