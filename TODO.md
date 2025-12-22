@@ -1,6 +1,8 @@
-# TODO
+# TODO 
+* `copy` should have verbose output
 * `copy` should stat dest not statNoFollow on `--merge`
   * or maby there should be a -S --symlink or something
+* `copy` --progress display a progress bar instead of normal verbose
 
 * `build -Djj_ref='@-'` so you can choose jj ref build time (build/commit/desc)
 * trash `--cleanup` 
