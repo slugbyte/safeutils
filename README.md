@@ -63,9 +63,9 @@ Usage: copy src.. dest (--flags)
  
   EXAMPLES:
   copy boom.zig bap.zig     Copy boom.zig to bap.zig
-  copy -dt util src         Trash src and replace with util(dir)
+  copy -dt util src         Copy util to src (trash src if exists)
   copy -db util src/        Copy util to src/util (backup src/util if exists)
-  copy -mb util test src    Merge util and test dirs with src dir (make backups of conflicts)
+  copy -m util test src     Merge util and test dirs into src dir (error if conflicts)
   copy -mt util test src/   Copy test and util into src (src/util src/test) (trash non dir-on-dir conflicts)
   copy -c **.png img        Create img dir and put all the pngs in it.      
 ```

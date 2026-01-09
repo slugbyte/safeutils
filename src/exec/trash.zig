@@ -108,7 +108,7 @@ pub fn main() !void {
     var success_count: usize = 0;
     var fail_count: usize = 0;
     for (ctx.positionals) |path| {
-        const stat = try ctx.cwd.stat(path) orelse {
+        const stat = try ctx.cwd.statNoFollow(path) orelse {
             try ctx.reporter.pushWarning("file not found: {s}", .{path});
             continue;
         };
