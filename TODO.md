@@ -1,12 +1,21 @@
 # TODO 
-* `copy` should have verbose output
 * `copy` should stat dest not statNoFollow on `--merge`
   * or maby there should be a -S --symlink or something
 * `copy` --progress display a progress bar instead of normal verbose
 
 * patch move across mount points error (trash and move) --multi-disk -m
-```
 
+* `build -Djj_ref='@-'` so you can choose jj ref build time (build/commit/desc)
+* trash `--cleanup` 
+  * remove borked `.trashinfo` files
+  * make a `lost_home` dir for files with no `.trashinfo` files
+* `trash --old 2d ./some/dir`
+  * remove files in a dir that are older than a number of days
+* sort cmd - sort replacement (+ --line-len -l --reverse -r)
+* ?? impl ~/.cache/safe/history
+
+# BUG move and copy break on rename across mountpoints
+```
 thread 355486 panic: unexpected error: RenameAcrossMountPoints
 /home/slugbyte/workspace/code/safeutils/src/util/Reporter.zig:34:20: 0x102089a in PANIC_WITH_REPORT__anon_3264 (trash)
     std.debug.panic(format, args);
@@ -25,13 +34,3 @@ fish: Job 1, 'trash pic' terminated by signal SIGABRT (Abort)
   
 ```
 
-* `build -Djj_ref='@-'` so you can choose jj ref build time (build/commit/desc)
-* trash `--cleanup` 
-  * remove borked `.trashinfo` files
-  * make a `lost_home` dir for files with no `.trashinfo` files
-* better trash name strat? `file.0001.ext`
-* `copy` cmd - `cp` replacment (copy src.. into dest)
-* `md` commadn - `mkdir` replacement
-* `merge` cmd - `cp -a` replacement (merge contents of src_dir into dest_dir)
-* sort cmd - sort replacement (+ --line-len -l --reverse -r)
-* ?? impl ~/.cache/safe/history

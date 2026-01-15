@@ -199,6 +199,7 @@ pub fn main() !void {
             }
 
             for (copy_list.items) |item| {
+                util.log("{s} -> {s}", .{ item.src, item.dest });
                 switch (item.kind) {
                     .file => try copyFile(&ctx, item),
                     .directory => try copyDir(&ctx, item),
