@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
         "trash",
     };
 
+    var copy_exe: ?*std.Build.Step.Compile = null;
     for (exe_list) |exe_name| {
         const exe = b.addExecutable(.{
             .name = exe_name,
@@ -30,12 +31,33 @@ pub fn build(b: *std.Build) void {
             }),
         });
         b.installArtifact(exe);
+        if (std.mem.eql(u8, exe_name, "copy")) {
+            copy_exe = exe;
+        }
         const run_cmd = b.addRunArtifact(exe);
         if (b.args) |args| {
             run_cmd.addArgs(args);
         }
         const run_step = b.step(b.fmt("{s}", .{exe_name}), b.fmt("Run {s} util.", .{exe_name}));
         run_step.dependOn(&run_cmd.step);
+    }
+
+    // Integration tests for copy
+    {
+        var test_options = b.addOptions();
+        test_options.addOptionPath("copy_exe_path", copy_exe.?.getEmittedBin());
+
+        const copy_test = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test/copy_cli_test.zig"),
+                .target = config.target,
+                .optimize = config.optimize,
+            }),
+        });
+        copy_test.root_module.addOptions("test_config", test_options);
+        const run_copy_test = b.addRunArtifact(copy_test);
+        const test_step = b.step("test", "Run integration tests");
+        test_step.dependOn(&run_copy_test.step);
     }
 
     var update_readme = build_pkg.UpdateReadme.init(b);

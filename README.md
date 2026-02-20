@@ -51,7 +51,7 @@ USAGE: trash files.. (--flags)
 Usage: copy src.. dest (--flags)
   Copy a files and a directories.
   
-  -d --dir             dirs copy recursively, and cobber conflicts
+  -d --dir             dirs copy recursively, and clobber conflicts
   -m --merge           dirs copy recursively, but src_dirs dont clobber dest_dirs
   -t --trash           trash conflicting files
   -c --create          create dest dir if not exists
@@ -59,7 +59,7 @@ Usage: copy src.. dest (--flags)
  
   -s --silent          only print errors
   -v --version         print this version
-  -h --help            print this version
+  -h --help            print this help
  
   EXAMPLES:
   copy boom.zig bap.zig     Copy boom.zig to bap.zig

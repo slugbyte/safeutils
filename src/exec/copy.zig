@@ -18,7 +18,7 @@ pub const help_msg =
     \\Usage: copy src.. dest (--flags)
     \\  Copy a files and a directories.
     \\  
-    \\  -d --dir             dirs copy recursively, and cobber conflicts
+    \\  -d --dir             dirs copy recursively, and clobber conflicts
     \\  -m --merge           dirs copy recursively, but src_dirs dont clobber dest_dirs
     \\  -t --trash           trash conflicting files
     \\  -c --create          create dest dir if not exists
@@ -26,7 +26,7 @@ pub const help_msg =
     \\ 
     \\  -s --silent          only print errors
     \\  -v --version         print this version
-    \\  -h --help            print this version
+    \\  -h --help            print this help
     \\ 
     \\  EXAMPLES:
     \\  copy boom.zig bap.zig     Copy boom.zig to bap.zig
@@ -70,7 +70,10 @@ pub fn main() !void {
             const dest_input = ctx.positionals[ctx.positionals.len - 1];
             var copy_list = try std.ArrayList(CopyItem).initCapacity(ctx.arena, src_input.len);
 
-            const dest_stat = try ctx.cwd.statNoFollow(dest_input);
+            const dest_stat = if (ctx.flag_dir_style == .Merge)
+                try ctx.cwd.stat(dest_input)
+            else
+                try ctx.cwd.statNoFollow(dest_input);
             if (dest_stat) |stat| {
                 if (ctx.flag_create) {
                     ctx.flag_create = false;
@@ -92,8 +95,9 @@ pub fn main() !void {
                 }
             } else {
                 if (ctx.flag_create) {
-                    try ctx.cwd.dir.makeDir(dest_input);
+                    try ctx.cwd.dir.makePath(dest_input);
                     should_join_src_to_dest = true;
+                    ctx.flag_create = false;
                 } else {
                     if (src_input.len > 1 and ctx.flag_dir_style != .Merge) {
                         try ctx.reporter.pushError("to copy multiple src files dest must be a dir", .{});
@@ -136,13 +140,24 @@ pub fn main() !void {
                             continue;
                         }
                         var dir = try ctx.cwd.dir.openDir(src_path, .{ .iterate = true });
+                        defer dir.close();
                         var walker = try dir.walk(ctx.arena);
                         while (try walker.next()) |item| {
-                            try copy_list.append(ctx.arena, .{
-                                .kind = item.kind,
-                                .src = try path.joinZ(ctx.arena, &.{ src_path, item.path }),
-                                .dest = try path.joinZ(ctx.arena, &.{ dest_name, item.path }),
-                            });
+                            switch (item.kind) {
+                                .file, .directory, .sym_link => {
+                                    try copy_list.append(ctx.arena, .{
+                                        .kind = item.kind,
+                                        .src = try path.joinZ(ctx.arena, &.{ src_path, item.path }),
+                                        .dest = try path.joinZ(ctx.arena, &.{ dest_name, item.path }),
+                                    });
+                                },
+                                else => {
+                                    try ctx.reporter.pushError("file type not supported [{t}]: ({s})", .{
+                                        item.kind,
+                                        try path.joinZ(ctx.arena, &.{ src_path, item.path }),
+                                    });
+                                },
+                            }
                         }
                     }
                 } else {
@@ -151,7 +166,7 @@ pub fn main() !void {
             }
 
             if (ctx.flag_dir_style == .Dir and ctx.flag_clobber_style != .NoClobber and !should_join_src_to_dest and src_input.len > 1) {
-                try ctx.reporter.pushError("--dir can only have one src file if dest is clobbered. add '/' or user --merge", .{});
+                try ctx.reporter.pushError("--dir can only have one src file if dest is clobbered. add '/' or use --merge", .{});
                 try ctx.reporter.EXIT_WITH_REPORT(1);
             }
 
@@ -174,7 +189,7 @@ pub fn main() !void {
 
             for (copy_list.items) |item| {
                 if (try ctx.cwd.isPathSameLocation(item.src, item.dest)) {
-                    try ctx.reporter.pushError("item cannot be copyed to it self: ({s})", .{item.src});
+                    try ctx.reporter.pushError("item cannot be copied to itself: ({s})", .{item.src});
                 }
             }
 
@@ -187,7 +202,7 @@ pub fn main() !void {
             }
 
             if (ctx.flag_create) {
-                ctx.cwd.dir.makeDir(dest_input) catch {};
+                ctx.cwd.dir.makePath(dest_input) catch {};
             }
 
             if (ctx.reporter.isError()) {
@@ -199,7 +214,7 @@ pub fn main() !void {
             }
 
             for (copy_list.items) |item| {
-                util.log("{s} -> {s}", .{ item.src, item.dest });
+                if (!ctx.flag_silent) util.log("{s} -> {s}", .{ item.src, item.dest });
                 switch (item.kind) {
                     .file => try copyFile(&ctx, item),
                     .directory => try copyDir(&ctx, item),
