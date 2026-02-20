@@ -26,12 +26,12 @@ pub const help_msg =
     \\
     \\    FZF Preview Options: (Combine with --revert-fzf or --fetch-fzf)
     \\    --viu                  Add support for viu block image display in fzf preview.
-    \\    --viu-width            Overwrite the width viu images are displated at.
+    \\    --viu-width            Overwrite the width viu images are displayed at.
     \\    --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
     \\
     \\  Other Flags:
     \\  -s --silent               Only print errors.
-    \\  -V --version              Print version.
+    \\  -v --version              Print version.
     \\  -h --help                 Display this help.
     \\ 
     \\  OPTIONAL DEPS:
@@ -146,21 +146,14 @@ pub const RevertInfo = struct {
     pub fn init(ctx: *Context, trash_name: []const u8) !RevertInfo {
         const basename = std.fs.path.basename(trash_name);
         const trash_dirpath = try util.dirpath.trash(ctx.arena);
-        const trashinfo_dirpath = try util.dirpath.trashInfo(ctx.arena);
         const trash_path = try std.fs.path.join(ctx.arena, &.{
             trash_dirpath,
             basename,
         });
-        const trashinfo_path = try std.fs.path.join(ctx.arena, &.{
-            trashinfo_dirpath,
-            try util.fmt(ctx.arena, "{s}.trashinfo", .{basename}),
-        });
+        const trashinfo_path = try util.trashinfo.filepath(ctx.arena, basename);
 
         const link_buffer = try ctx.arena.alloc(u8, std.fs.max_path_bytes);
         const trash_link = ctx.cwd.dir.readLink(trash_path, link_buffer) catch null;
-        if (trash_link == null) {
-            ctx.arena.free(link_buffer);
-        }
         var trash_stat = try ctx.cwd.stat(trash_path);
         if (trash_link != null) {
             trash_stat.?.kind = .sym_link;
@@ -227,25 +220,44 @@ pub fn fzfPreview(ctx: *Context, trash_name: []const u8) !void {
 
             try stdout.interface.print("{s}/\n", .{std.fs.path.basename(revert_info.trash_path)});
             var iter = dir.iterate();
-            var count: usize = 0;
+            var total_count: usize = 0;
 
             const max_display = 20;
+            const Entry = struct { name: [std.fs.max_name_bytes]u8, name_len: usize, stat: ?std.fs.File.Stat };
+            var entries: [max_display]Entry = undefined;
+            var display_count: usize = 0;
+
             while (try iter.next()) |entry| {
-                count += 1;
-                if (count < max_display) {
-                    const stat = try dir.statFile(entry.name);
-                    if (iter.index != iter.end_index) {
-                        @branchHint(.likely);
-                        try stdout.interface.print("  ├─ ({t} {d}) {s}\n", .{ stat.kind, stat.size, entry.name });
-                    } else {
-                        try stdout.interface.print("  └─ ({t} {d}) {s}\n", .{ stat.kind, stat.size, entry.name });
-                    }
+                if (display_count < max_display) {
+                    // statFile follows symlinks, so dangling symlinks will fail with
+                    // FileNotFound. Catch all stat errors and show the entry without
+                    // size/kind info rather than crashing the preview.
+                    const entry_stat: ?std.fs.File.Stat = dir.statFile(entry.name) catch null;
+                    var name_buf: [std.fs.max_name_bytes]u8 = undefined;
+                    @memcpy(name_buf[0..entry.name.len], entry.name);
+                    entries[display_count] = .{ .name = name_buf, .name_len = entry.name.len, .stat = entry_stat };
+                    display_count += 1;
                 }
-                if (count == max_display) {
-                    try stdout.interface.print("  ...\n", .{});
+                total_count += 1;
+            }
+
+            // Draw tree: we collect entries first because Dir.Iterator.index and
+            // end_index are internal buffer byte offsets, not entry counts. They
+            // only reflect the current kernel readdir buffer batch, so comparing
+            // them cannot reliably detect the last directory entry.
+            for (entries[0..display_count], 0..) |entry, i| {
+                const is_last = i == display_count - 1 and total_count <= max_display;
+                const prefix: []const u8 = if (is_last) "  └─ " else "  ├─ ";
+                if (entry.stat) |stat| {
+                    try stdout.interface.print("{s}({t} {d}) {s}\n", .{ prefix, stat.kind, stat.size, entry.name[0..entry.name_len] });
+                } else {
+                    try stdout.interface.print("{s}(? ?) {s}\n", .{ prefix, entry.name[0..entry.name_len] });
                 }
             }
-            try stdout.interface.print("  {d} children\n", .{count});
+            if (total_count > max_display) {
+                try stdout.interface.print("  ...\n", .{});
+            }
+            try stdout.interface.print("  {d} children\n", .{total_count});
         },
         .file => {
             const file = try ctx.cwd.filepathOpen(revert_info.trash_path, .{});
@@ -303,7 +315,7 @@ pub fn revertTrash(ctx: *Context, trash_name: []const u8) !void {
 /// trash_name gets basenamed, so it can be a path (but the dirname will be ignored).
 pub fn fetchTrash(ctx: *Context, trash_name: []const u8) !void {
     if (builtin.os.tag != .linux) {
-        try ctx.reporter.pushError("--revert is only supported on linux", .{});
+        try ctx.reporter.pushError("--fetch is only supported on linux", .{});
     } else {
         const revert_info = try RevertInfo.init(ctx, trash_name);
         const basename = std.fs.path.basename(revert_info.revert_path);
@@ -322,9 +334,9 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
             try ctx.reporter.pushError("fzf needs stdout to be a tty", .{});
             ctx.reporter.EXIT_WITH_REPORT(1);
         }
-        const trashinfo_dirpath = try util.dirpath.trashInfo(ctx.arena);
         const trash_dirpath = try util.dirpath.trash(ctx.arena);
-        const trash_dir = try ctx.cwd.dir.openDir(trash_dirpath, .{ .iterate = true });
+        var trash_dir = try ctx.cwd.dir.openDir(trash_dirpath, .{ .iterate = true });
+        defer trash_dir.close();
 
         var fzf_option_list = std.ArrayList(u8).empty;
         var iter = trash_dir.iterate();
@@ -334,11 +346,7 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
                 if (!std.ascii.isAscii(char)) continue :fill_fzf_option_list;
             }
 
-            // TODO: cleanup all the places wher im manually creating trash info paths
-            const trashinfo_path = try std.fs.path.join(ctx.arena, &.{
-                trashinfo_dirpath,
-                try util.fmt(ctx.arena, "{s}.trashinfo", .{entry.name}),
-            });
+            const trashinfo_path = try util.trashinfo.filepath(ctx.arena, entry.name);
 
             if (try ctx.cwd.exists(trashinfo_path)) {
                 try fzf_option_list.appendSlice(ctx.arena, entry.name);
@@ -388,10 +396,26 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
         child.stdin.?.close();
         child.stdin = null;
         const revert_path = util.trim(try child.stdout.?.readToEndAlloc(ctx.arena, std.fs.max_path_bytes));
-        _ = try child.wait();
+        const term = try child.wait();
+
+        switch (term) {
+            .Exited => |code| switch (code) {
+                0 => {},
+                // fzf exit 1 = no match, 130 = interrupted (Ctrl+C / ESC)
+                1, 130 => return,
+                // fzf exit 2 = error
+                else => {
+                    try ctx.reporter.pushError("fzf exited with error code {d}", .{code});
+                    ctx.reporter.EXIT_WITH_REPORT(1);
+                },
+            },
+            else => {
+                try ctx.reporter.pushError("fzf terminated abnormally", .{});
+                ctx.reporter.EXIT_WITH_REPORT(1);
+            },
+        }
 
         if (revert_path.len == 0) {
-            util.log("no files reverted", .{});
             return;
         }
 
@@ -453,7 +477,7 @@ const Context = struct {
         @"--help",
         h,
         @"--version",
-        V,
+        v,
         @"--silent",
         s,
         @"--fetch",
@@ -479,7 +503,7 @@ const Context = struct {
                 .Flag => |flag| {
                     switch (flag) {
                         .h, .@"--help" => self.flag_help = true,
-                        .V, .@"--version" => self.flag_version = true,
+                        .v, .@"--version" => self.flag_version = true,
                         .s, .@"--silent" => self.flag_silent = true,
                         .F, .@"--fetch-fzf" => self.flag_fetch_fzf = true,
                         .f, .@"--fetch" => {

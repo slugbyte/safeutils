@@ -38,9 +38,7 @@ pub const ClobberStyle = enum(u8) {
 };
 
 pub fn log(comptime format: []const u8, arg: anytype) void {
-    var buffer: [1024]u8 = undefined;
-    const msg = std.fmt.bufPrint(&buffer, format, arg) catch return;
-    std.debug.print("{s}\n", .{msg});
+    std.debug.print(format ++ "\n", arg);
 }
 
 pub fn isString(T: type) bool {

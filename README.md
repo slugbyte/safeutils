@@ -33,12 +33,12 @@ USAGE: trash files.. (--flags)
 
     FZF Preview Options: (Combine with --revert-fzf or --fetch-fzf)
     --viu                  Add support for viu block image display in fzf preview.
-    --viu-width            Overwrite the width viu images are displated at.
+    --viu-width            Overwrite the width viu images are displayed at.
     --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
 
   Other Flags:
   -s --silent               Only print errors.
-  -V --version              Print version.
+  -v --version              Print version.
   -h --help                 Display this help.
  
   OPTIONAL DEPS:
@@ -94,6 +94,6 @@ Usage: move src.. dest (--flags)
 
   Other Flags:
     -s --silent   Only print errors
-    -V --version  Print version
+    -v --version  Print version
     -h --help     Print this help
 ```

@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) void {
 
     var copy_exe: ?*std.Build.Step.Compile = null;
     var move_exe: ?*std.Build.Step.Compile = null;
+    var trash_exe: ?*std.Build.Step.Compile = null;
     for (exe_list) |exe_name| {
         const exe = b.addExecutable(.{
             .name = exe_name,
@@ -37,6 +38,9 @@ pub fn build(b: *std.Build) void {
         }
         if (std.mem.eql(u8, exe_name, "move")) {
             move_exe = exe;
+        }
+        if (std.mem.eql(u8, exe_name, "trash")) {
+            trash_exe = exe;
         }
         const run_cmd = b.addRunArtifact(exe);
         if (b.args) |args| {
@@ -80,6 +84,23 @@ pub fn build(b: *std.Build) void {
         move_test.root_module.addOptions("test_config", test_options);
         const run_move_test = b.addRunArtifact(move_test);
         test_step.dependOn(&run_move_test.step);
+    }
+
+    // Integration tests for trash
+    {
+        var test_options = b.addOptions();
+        test_options.addOptionPath("trash_exe_path", trash_exe.?.getEmittedBin());
+
+        const trash_test = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test/trash_cli_test.zig"),
+                .target = config.target,
+                .optimize = config.optimize,
+            }),
+        });
+        trash_test.root_module.addOptions("test_config", test_options);
+        const run_trash_test = b.addRunArtifact(trash_test);
+        test_step.dependOn(&run_trash_test.step);
     }
 
     var update_readme = build_pkg.UpdateReadme.init(b);

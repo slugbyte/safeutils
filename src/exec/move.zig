@@ -35,7 +35,7 @@ pub const help_msg =
     \\
     \\  Other Flags:
     \\    -s --silent   Only print errors
-    \\    -V --version  Print version
+    \\    -v --version  Print version
     \\    -h --help     Print this help
 ;
 
@@ -315,7 +315,7 @@ const Context = struct {
         @"--help",
         h,
         @"--version",
-        V,
+        v,
         @"--trash",
         t,
         @"--backup",
@@ -333,7 +333,7 @@ const Context = struct {
             switch (result) {
                 .Flag => |flag| switch (flag) {
                     .h, .@"--help" => self.flag_help = true,
-                    .V, .@"--version" => self.flag_version = true,
+                    .v, .@"--version" => self.flag_version = true,
                     .s, .@"--silent" => self.flag_silent = true,
                     .r, .@"--rename" => self.flag_rename = true,
                     .t, .@"--trash" => self.flag_clobber_style.prioritySet(.Trash),
