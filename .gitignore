@@ -98,3 +98,6 @@ $RECYCLE.BIN/
 .zig-cache/
 zig-out/
 docgen_tmp/
+
+### notes ###
+note/
