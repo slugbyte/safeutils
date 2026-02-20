@@ -40,6 +40,7 @@ pub const help_msg =
 ;
 
 pub fn main() !void {
+    // Arena intentionally not freed -- OS reclaims on process exit
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_instance.allocator();
     var ctx = try Context.init(arena);
@@ -80,7 +81,7 @@ pub fn main() !void {
             if (try ctx.cwd.stat(src_path) == null) {
                 try ctx.reporter.pushError("src not found: ({s})", .{src_path});
             }
-            if (ctx.reporter.isTrouble()) {
+            if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
                 return ctx.reporter.EXIT_WITH_REPORT(1);
             }
 
@@ -90,7 +91,7 @@ pub fn main() !void {
                     try ctx.reporter.pushError("--rename value may not include a '/'", .{});
                 }
                 dest_path = try util.fmtZ(arena, "{s}/{s}", .{ dirname(src_path) orelse "./", dest_path });
-                if (ctx.reporter.isTrouble()) {
+                if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
                     return ctx.reporter.EXIT_WITH_REPORT(1);
                 }
             }
@@ -98,7 +99,7 @@ pub fn main() !void {
             // CHECK DEST AND CLOBBER
             if (try ctx.cwd.statNoFollow(dest_path)) |dest_stat| {
                 const is_parent = try checkDest(&ctx, dest_path, dest_stat, false);
-                if (ctx.reporter.isTrouble()) {
+                if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
                     return ctx.reporter.EXIT_WITH_REPORT(1);
                 }
 
@@ -115,7 +116,7 @@ pub fn main() !void {
                 try ctx.reporter.pushError("src and dest cannot be same location: ({s} == {s})", .{ src_path, dest_path });
             }
 
-            if (ctx.reporter.isTrouble()) {
+            if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
                 return ctx.reporter.EXIT_WITH_REPORT(1);
             }
 
@@ -136,7 +137,7 @@ pub fn main() !void {
                         try ctx.reporter.pushError("src path not found: ({s})", .{src_path});
                     }
                 }
-                if (ctx.reporter.isTrouble()) {
+                if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
                     try ctx.reporter.pushError("moved 0/{d} files", .{src_path_list.len});
                     return ctx.reporter.EXIT_WITH_REPORT(1);
                 }
@@ -148,7 +149,7 @@ pub fn main() !void {
                 } else {
                     try ctx.reporter.pushError("dest must be a directory.", .{});
                 }
-                if (ctx.reporter.isTrouble()) {
+                if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
                     try ctx.reporter.pushError("moved 0/{d} files", .{src_path_list.len});
                     return ctx.reporter.EXIT_WITH_REPORT(1);
                 }
@@ -165,7 +166,7 @@ pub fn main() !void {
                         try ctx.reporter.pushError("src and dest cannot be same location: ({s} == {s})", .{ src_path, real_dest_path });
                     }
                 }
-                if (ctx.reporter.isTrouble()) {
+                if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
                     try ctx.reporter.pushError("moved 0/{d} files", .{src_path_list.len});
                     return ctx.reporter.EXIT_WITH_REPORT(1);
                 }
@@ -182,12 +183,12 @@ pub fn main() !void {
     ctx.reporter.EXIT_WITH_REPORT(status);
 }
 
-// returns true if dest is a valid parrent directory
+// returns true if dest is a valid parent directory
 pub fn checkDest(
     ctx: *Context,
     dest_path: []const u8,
     dest_stat: std.fs.File.Stat,
-    /// dest_is_into_path is strage name.. it just means that dest_path has been created from og_dest/og_src
+    /// dest_is_into_path is a strange name.. it just means that dest_path has been created from og_dest/og_src
     dest_is_into_path: bool,
 ) !bool {
     switch (dest_stat.kind) {

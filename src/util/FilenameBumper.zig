@@ -1,10 +1,11 @@
 const std = @import("std");
+const t = std.testing;
 const util = @import("../root.zig");
 const Allocator = std.mem.Allocator;
 
 const FilenameBumper = @This();
 /// parses and creates filenames with a counter before the extension
-/// used when trying to make sure files don't have naming confilcts
+/// used when trying to make sure files don't have naming conflicts
 ext: []const u8,
 name: []const u8,
 count: ?usize,
@@ -19,7 +20,7 @@ pub fn parse(filename: []const u8) FilenameBumper {
     for (0..name.len) |i| {
         if (std.ascii.isDigit(name[name.len - i - 1])) {
             end_digit_count += 1;
-        }
+        } else break;
     }
     if (end_digit_count > 0) {
         count = std.fmt.parseInt(usize, name[name.len - end_digit_count ..], 10) catch null;
@@ -27,7 +28,7 @@ pub fn parse(filename: []const u8) FilenameBumper {
     if (count != null) {
         name = name[0 .. name.len - end_digit_count];
     }
-    name = std.mem.trimEnd(u8, name[0 .. name.len - end_digit_count], "-_ .");
+    name = std.mem.trimEnd(u8, name, "-_ .");
     return .{
         .ext = ext,
         .name = name,
@@ -70,4 +71,72 @@ pub fn fmtFilename(self: FilenameBumper, allocator: Allocator) ![]u8 {
     } else {
         return try util.fmt(allocator, "{s}{s}", .{ self.name, self.ext });
     }
+}
+
+test "TEST: parse simple filename" {
+    const b = parse("hello.txt");
+    try t.expectEqualStrings("hello", b.name);
+    try t.expectEqualStrings(".txt", b.ext);
+    try t.expectEqual(@as(?usize, null), b.count);
+}
+
+test "TEST: parse filename with trailing number" {
+    const b = parse("foo_42.txt");
+    try t.expectEqualStrings("foo", b.name);
+    try t.expectEqualStrings(".txt", b.ext);
+    try t.expectEqual(@as(?usize, 42), b.count);
+}
+
+test "TEST: parse filename with no extension" {
+    const b = parse("README");
+    try t.expectEqualStrings("README", b.name);
+    try t.expectEqualStrings("", b.ext);
+    try t.expectEqual(@as(?usize, null), b.count);
+}
+
+test "TEST: parse filename with embedded digits keeps them" {
+    const b = parse("a1b2c.txt");
+    try t.expectEqualStrings("a1b2c", b.name);
+    try t.expectEqualStrings(".txt", b.ext);
+    try t.expectEqual(@as(?usize, null), b.count);
+}
+
+test "TEST: bump from null starts at 0" {
+    var b = parse("file.txt");
+    try t.expectEqual(@as(?usize, null), b.count);
+    b.bump();
+    try t.expectEqual(@as(?usize, 0), b.count);
+    b.bump();
+    try t.expectEqual(@as(?usize, 1), b.count);
+}
+
+test "TEST: bump from existing count increments" {
+    var b = parse("file_05.txt");
+    try t.expectEqual(@as(?usize, 5), b.count);
+    b.bump();
+    try t.expectEqual(@as(?usize, 6), b.count);
+}
+
+test "TEST: fmtFilename without count" {
+    const b = parse("hello.txt");
+    const name = try b.fmtFilename(t.allocator);
+    defer t.allocator.free(name);
+    try t.expectEqualStrings("hello.txt", name);
+}
+
+test "TEST: fmtFilename with count" {
+    var b = parse("hello.txt");
+    b.bump();
+    const name = try b.fmtFilename(t.allocator);
+    defer t.allocator.free(name);
+    try t.expectEqualStrings("hello_00.txt", name);
+}
+
+test "TEST: fmtFilename bumped twice" {
+    var b = parse("hello.txt");
+    b.bump();
+    b.bump();
+    const name = try b.fmtFilename(t.allocator);
+    defer t.allocator.free(name);
+    try t.expectEqualStrings("hello_01.txt", name);
 }

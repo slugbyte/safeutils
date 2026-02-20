@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = std.testing;
 
 pub fn StackAllocator(comptime capacity: usize) type {
     return struct {
@@ -23,3 +24,28 @@ pub fn StackAllocator(comptime capacity: usize) type {
 
 pub const StackFilepathAllocator = StackAllocator(std.fs.max_path_bytes);
 pub const StackFilenameAllocator = StackAllocator(std.fs.max_path_bytes);
+
+test "TEST: basic allocation works" {
+    var sa = StackAllocator(256).empty;
+    const allocator = sa.allocatorInvalidatePrevious();
+    const slice = try allocator.alloc(u8, 10);
+    try t.expectEqual(@as(usize, 10), slice.len);
+}
+
+test "TEST: invalidate resets for new allocation" {
+    var sa = StackAllocator(64).empty;
+    const a1 = sa.allocatorInvalidatePrevious();
+    const s1 = try a1.alloc(u8, 32);
+    try t.expectEqual(@as(usize, 32), s1.len);
+
+    // second call resets -- we can allocate the full 64 again
+    const a2 = sa.allocatorInvalidatePrevious();
+    const s2 = try a2.alloc(u8, 64);
+    try t.expectEqual(@as(usize, 64), s2.len);
+}
+
+test "TEST: allocation beyond capacity fails" {
+    var sa = StackAllocator(16).empty;
+    const allocator = sa.allocatorInvalidatePrevious();
+    try t.expectError(error.OutOfMemory, allocator.alloc(u8, 17));
+}

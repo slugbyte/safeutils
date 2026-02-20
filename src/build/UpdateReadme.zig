@@ -43,10 +43,10 @@ const README_CONTENT =
     \\
     \\## Features
     \\* Verbose by default
-    \\* Safe clobber strategys
+    \\* Safe clobber strategies
     \\  * `trash` - move files to trash but rename conflicts `(name)_00.(ext) (name)_01.(ext)...`
     \\  * `backup` -  rename original file to `(original).backup~` and trash any previous backups.
-    \\* `trash` can use [fzf](https://github.com/junegunn/fzf) to revert and fetch trashed files, and provieds a nice trash previewer.
+    \\* `trash` can use [fzf](https://github.com/junegunn/fzf) to revert and fetch trashed files, and provides a nice trash previewer.
     \\
     \\## trash (rm replacement)
     \\`--revert-fzf` and `--fetch-fzf` have a custom [fzf](https://github.com/junegunn/fzf) preview with...

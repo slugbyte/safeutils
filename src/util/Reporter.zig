@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = std.testing;
 const util = @import("../root.zig");
 const Allocator = std.mem.Allocator;
 
@@ -56,10 +57,6 @@ pub inline fn isWarning(self: Reporter) bool {
     return self.warn_list.items.len != 0;
 }
 
-pub inline fn isTrouble(self: Reporter) bool {
-    return self.isError() or self.isWarning();
-}
-
 pub inline fn getAllWarning(self: Reporter) [][]const u8 {
     return self.warn_list.items;
 }
@@ -74,4 +71,41 @@ pub inline fn pushWarning(self: *Reporter, comptime format: []const u8, args: an
 
 pub inline fn pushError(self: *Reporter, comptime format: []const u8, args: anytype) Allocator.Error!void {
     try self.error_list.append(self.allocator, try util.fmt(self.allocator, format, args));
+}
+
+test "TEST: init starts with no errors or warnings" {
+    var reporter = init(t.allocator);
+    defer reporter.deinit();
+    try t.expect(!reporter.isError());
+    try t.expect(!reporter.isWarning());
+}
+
+test "TEST: pushError sets isError" {
+    var reporter = init(t.allocator);
+    defer reporter.deinit();
+    try reporter.pushError("test error {s}", .{"msg"});
+    try t.expect(reporter.isError());
+    try t.expect(!reporter.isWarning());
+    try t.expectEqual(@as(usize, 1), reporter.getAllError().len);
+    try t.expectEqualStrings("test error msg", reporter.getAllError()[0]);
+}
+
+test "TEST: pushWarning sets isWarning" {
+    var reporter = init(t.allocator);
+    defer reporter.deinit();
+    try reporter.pushWarning("warn {d}", .{42});
+    try t.expect(!reporter.isError());
+    try t.expect(reporter.isWarning());
+    try t.expectEqual(@as(usize, 1), reporter.getAllWarning().len);
+    try t.expectEqualStrings("warn 42", reporter.getAllWarning()[0]);
+}
+
+test "TEST: multiple errors accumulate" {
+    var reporter = init(t.allocator);
+    defer reporter.deinit();
+    try reporter.pushError("e1", .{});
+    try reporter.pushError("e2", .{});
+    try reporter.pushWarning("w1", .{});
+    try t.expectEqual(@as(usize, 2), reporter.getAllError().len);
+    try t.expectEqual(@as(usize, 1), reporter.getAllWarning().len);
 }

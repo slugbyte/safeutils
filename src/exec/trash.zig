@@ -51,6 +51,7 @@ const UndoData = struct {
 };
 
 pub fn main() !void {
+    // Arena intentionally not freed -- OS reclaims on process exit
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_instance.allocator();
 
@@ -131,7 +132,7 @@ pub fn main() !void {
         util.log("trashed {d}/{d} files", .{ success_count, success_count + fail_count });
     }
 
-    const status: u8 = if (ctx.reporter.isTrouble()) 1 else 0;
+    const status: u8 = if (ctx.reporter.isError() or ctx.reporter.isWarning()) 1 else 0;
     ctx.reporter.EXIT_WITH_REPORT(status);
 }
 

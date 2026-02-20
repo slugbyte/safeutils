@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = std.testing;
 
 /// iterates over each of the flags within a single arg
 /// if its a long flag `--flag` it will just parse the whole arg as an enum
@@ -61,4 +62,58 @@ pub fn FlagIterator(FlagEnum: type) type {
             return null;
         }
     };
+}
+
+const TestFlags = enum {
+    @"--help",
+    h,
+    @"--verbose",
+    v,
+    @"--silent",
+    s,
+};
+
+test "TEST: long flag parsed correctly" {
+    var iter = FlagIterator(TestFlags).init("--help");
+    const result = iter.next().?;
+    try t.expectEqual(TestFlags.@"--help", result.Flag);
+    try t.expect(iter.isFlag());
+    try t.expect(iter.next() == null);
+}
+
+test "TEST: unknown long flag" {
+    var iter = FlagIterator(TestFlags).init("--bogus");
+    const result = iter.next().?;
+    try t.expectEqualStrings("--bogus", result.UnknownLong);
+    try t.expect(iter.isFlag());
+}
+
+test "TEST: short flags iterated individually" {
+    var iter = FlagIterator(TestFlags).init("-hvs");
+    const r1 = iter.next().?;
+    try t.expectEqual(TestFlags.h, r1.Flag);
+    const r2 = iter.next().?;
+    try t.expectEqual(TestFlags.v, r2.Flag);
+    const r3 = iter.next().?;
+    try t.expectEqual(TestFlags.s, r3.Flag);
+    try t.expect(iter.next() == null);
+    try t.expect(iter.isFlag());
+}
+
+test "TEST: unknown short flag" {
+    var iter = FlagIterator(TestFlags).init("-x");
+    const result = iter.next().?;
+    try t.expectEqual(@as(u8, 'x'), result.UnknownShort);
+}
+
+test "TEST: non-flag arg returns null immediately" {
+    var iter = FlagIterator(TestFlags).init("positional");
+    try t.expect(iter.next() == null);
+    try t.expect(!iter.isFlag());
+}
+
+test "TEST: single dash returns null" {
+    var iter = FlagIterator(TestFlags).init("-");
+    try t.expect(iter.next() == null);
+    try t.expect(!iter.isFlag());
 }

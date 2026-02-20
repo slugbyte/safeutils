@@ -10,16 +10,10 @@ pub fn build(b: *std.Build) void {
         .optimize = config.optimize,
     });
 
-    const exe_list = [_][]const u8{
-        "move",
-        "copy",
-        "trash",
-    };
+    const exe_names = [_][]const u8{ "copy", "move", "trash" };
+    var executables: [exe_names.len]*std.Build.Step.Compile = undefined;
 
-    var copy_exe: ?*std.Build.Step.Compile = null;
-    var move_exe: ?*std.Build.Step.Compile = null;
-    var trash_exe: ?*std.Build.Step.Compile = null;
-    for (exe_list) |exe_name| {
+    for (exe_names, 0..) |exe_name, i| {
         const exe = b.addExecutable(.{
             .name = exe_name,
             .root_module = b.createModule(.{
@@ -33,15 +27,8 @@ pub fn build(b: *std.Build) void {
             }),
         });
         b.installArtifact(exe);
-        if (std.mem.eql(u8, exe_name, "copy")) {
-            copy_exe = exe;
-        }
-        if (std.mem.eql(u8, exe_name, "move")) {
-            move_exe = exe;
-        }
-        if (std.mem.eql(u8, exe_name, "trash")) {
-            trash_exe = exe;
-        }
+        executables[i] = exe;
+
         const run_cmd = b.addRunArtifact(exe);
         if (b.args) |args| {
             run_cmd.addArgs(args);
@@ -52,55 +39,23 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run integration tests");
 
-    // Integration tests for copy
-    {
+    for (exe_names, 0..) |exe_name, i| {
         var test_options = b.addOptions();
-        test_options.addOptionPath("copy_exe_path", copy_exe.?.getEmittedBin());
+        test_options.addOptionPath(
+            b.fmt("{s}_exe_path", .{exe_name}),
+            executables[i].getEmittedBin(),
+        );
 
-        const copy_test = b.addTest(.{
+        const integration_test = b.addTest(.{
             .root_module = b.createModule(.{
-                .root_source_file = b.path("test/copy_cli_test.zig"),
+                .root_source_file = b.path(b.fmt("test/{s}_cli_test.zig", .{exe_name})),
                 .target = config.target,
                 .optimize = config.optimize,
             }),
         });
-        copy_test.root_module.addOptions("test_config", test_options);
-        const run_copy_test = b.addRunArtifact(copy_test);
-        test_step.dependOn(&run_copy_test.step);
-    }
-
-    // Integration tests for move
-    {
-        var test_options = b.addOptions();
-        test_options.addOptionPath("move_exe_path", move_exe.?.getEmittedBin());
-
-        const move_test = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("test/move_cli_test.zig"),
-                .target = config.target,
-                .optimize = config.optimize,
-            }),
-        });
-        move_test.root_module.addOptions("test_config", test_options);
-        const run_move_test = b.addRunArtifact(move_test);
-        test_step.dependOn(&run_move_test.step);
-    }
-
-    // Integration tests for trash
-    {
-        var test_options = b.addOptions();
-        test_options.addOptionPath("trash_exe_path", trash_exe.?.getEmittedBin());
-
-        const trash_test = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("test/trash_cli_test.zig"),
-                .target = config.target,
-                .optimize = config.optimize,
-            }),
-        });
-        trash_test.root_module.addOptions("test_config", test_options);
-        const run_trash_test = b.addRunArtifact(trash_test);
-        test_step.dependOn(&run_trash_test.step);
+        integration_test.root_module.addOptions("test_config", test_options);
+        const run_test = b.addRunArtifact(integration_test);
+        test_step.dependOn(&run_test.step);
     }
 
     var update_readme = build_pkg.UpdateReadme.init(b);

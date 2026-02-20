@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = std.testing;
 const Allocator = std.mem.Allocator;
 
 pub const ArgIterator = @This();
@@ -78,4 +79,58 @@ pub inline fn nextFloat(self: *ArgIterator, T: type) !T {
 pub inline fn nextEnum(self: *ArgIterator, T: type) !T {
     const arg = try self.nextOrFail();
     return std.meta.stringToEnum(T, arg) orelse return Error.ParseFailed;
+}
+
+test "TEST: next iterates through args" {
+    const args = &[_][:0]const u8{ "a", "b", "c" };
+    var iter = init(args);
+    try t.expectEqualStrings("a", iter.next().?);
+    try t.expectEqualStrings("b", iter.next().?);
+    try t.expectEqualStrings("c", iter.next().?);
+    try t.expect(iter.next() == null);
+}
+
+test "TEST: peek does not advance" {
+    const args = &[_][:0]const u8{ "x", "y" };
+    var iter = init(args);
+    try t.expectEqualStrings("x", iter.peek().?);
+    try t.expectEqualStrings("x", iter.peek().?);
+    try t.expectEqualStrings("x", iter.next().?);
+}
+
+test "TEST: skip advances without returning value" {
+    const args = &[_][:0]const u8{ "a", "b" };
+    var iter = init(args);
+    _ = iter.skip();
+    try t.expectEqualStrings("b", iter.next().?);
+}
+
+test "TEST: reset returns to beginning" {
+    const args = &[_][:0]const u8{ "a", "b" };
+    var iter = init(args);
+    _ = iter.next();
+    _ = iter.next();
+    iter.reset();
+    try t.expectEqualStrings("a", iter.next().?);
+}
+
+test "TEST: remaining counts correctly" {
+    const args = &[_][:0]const u8{ "a", "b", "c" };
+    var iter = init(args);
+    try t.expectEqual(@as(usize, 3), iter.remaining());
+    _ = iter.next();
+    try t.expectEqual(@as(usize, 2), iter.remaining());
+}
+
+test "TEST: nextInt parses integer" {
+    const args = &[_][:0]const u8{"42"};
+    var iter = init(args);
+    const value = try iter.nextInt(usize, 10);
+    try t.expectEqual(@as(usize, 42), value);
+}
+
+test "TEST: nextOrFail returns error on empty" {
+    const args = &[_][:0]const u8{};
+    var iter = init(args);
+    try t.expectError(Error.MissingValue, iter.nextOrFail());
 }

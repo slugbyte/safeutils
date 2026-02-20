@@ -2,12 +2,12 @@ const std = @import("std");
 
 /// Used to detect if a file is a binary file, inspired by [Vjekoslav Krajačić's talk on File Pilot](https://www.youtube.com/watch?v=bUOOaXf9qIM)
 /// if a file contains a null byte `0` its a binary file otherwise its a text file
-/// NOTE: you should ignore all `count` and `err` valuse returned from `.interface` fns
+/// NOTE: you should ignore all `count` and `err` values returned from `.interface` fns
 const NullByteDetectorWriter = @This();
 
-/// true if the writer ever recives a null byte `0`
+/// true if the writer ever receives a null byte `0`
 contains_null: bool = false,
-/// you should ignore all `count` and `err` valuse returned from `.interface` fns
+/// you should ignore all `count` and `err` values returned from `.interface` fns
 interface: std.Io.Writer,
 
 /// buffer.len must be greater than 0

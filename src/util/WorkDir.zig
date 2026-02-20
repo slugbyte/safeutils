@@ -20,9 +20,67 @@ pub fn cwd() WorkDir {
     return init(std.fs.cwd());
 }
 
-/// move a path on the file system
+/// move a path on the file system, falls back to copy+delete across mount points
 pub fn move(self: WorkDir, path_src: []const u8, path_dest: []const u8) !void {
-    try self.dir.rename(path_src, path_dest);
+    self.dir.rename(path_src, path_dest) catch |err| switch (err) {
+        error.RenameAcrossMountPoints => return self.moveAcrossMountPoints(path_src, path_dest),
+        else => return err,
+    };
+}
+
+/// fallback for move across mount points: copy then delete the source
+fn moveAcrossMountPoints(self: WorkDir, path_src: []const u8, path_dest: []const u8) !void {
+    const source_stat = try self.statNoFollow(path_src) orelse return error.FileNotFound;
+    switch (source_stat.kind) {
+        .file => {
+            try self.dir.copyFile(path_src, self.dir, path_dest, .{});
+            try self.dir.deleteFile(path_src);
+        },
+        .sym_link => {
+            var link_buffer: [std.fs.max_path_bytes]u8 = undefined;
+            const link_target = try self.dir.readLink(path_src, &link_buffer);
+            try self.dir.symLink(link_target, path_dest, .{});
+            try self.dir.deleteFile(path_src);
+        },
+        .directory => {
+            try self.copyDirRecursive(path_src, path_dest);
+            try self.dir.deleteTree(path_src);
+        },
+        else => return error.FileNotFound,
+    }
+}
+
+/// recursively copy a directory tree from src to dest within self.dir
+fn copyDirRecursive(self: WorkDir, src_path: []const u8, dest_path: []const u8) !void {
+    // create the top-level destination directory
+    self.dir.makeDir(dest_path) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+
+    var src_dir = try self.dir.openDir(src_path, .{ .iterate = true });
+    defer src_dir.close();
+
+    // use a fixed buffer allocator for path joins to avoid heap allocation
+    var path_buffer: [2 * std.fs.max_path_bytes]u8 = undefined;
+    var iter = src_dir.iterate();
+    while (try iter.next()) |entry| {
+        var fba = std.heap.FixedBufferAllocator.init(&path_buffer);
+        const fba_allocator = fba.allocator();
+        const child_src = try std.fs.path.join(fba_allocator, &.{ src_path, entry.name });
+        const child_dest = try std.fs.path.join(fba_allocator, &.{ dest_path, entry.name });
+
+        switch (entry.kind) {
+            .file => try self.dir.copyFile(child_src, self.dir, child_dest, .{}),
+            .sym_link => {
+                var link_buffer: [std.fs.max_path_bytes]u8 = undefined;
+                const link_target = try self.dir.readLink(child_src, &link_buffer);
+                try self.dir.symLink(link_target, child_dest, .{});
+            },
+            .directory => try self.copyDirRecursive(child_src, child_dest),
+            else => {},
+        }
+    }
 }
 
 /// stat a path and get null if FileNotFound
@@ -33,7 +91,7 @@ pub fn stat(self: WorkDir, path: []const u8) !?std.fs.File.Stat {
     };
 }
 
-/// modified version of dir.statFile but added SYMLIN_NOFOLLOW an null instead of File not Foound (also only linux/posix)
+/// modified version of dir.statFile but added SYMLINK_NOFOLLOW and null instead of FileNotFound (also only linux/posix)
 pub fn statNoFollow(self: WorkDir, sub_path: []const u8) !?std.fs.File.Stat {
     const Stat = std.fs.File.Stat;
     const linux = std.os.linux;
@@ -62,11 +120,14 @@ pub fn statNoFollow(self: WorkDir, sub_path: []const u8) !?std.fs.File.Stat {
             else => |err| std.posix.unexpectedErrno(err),
         };
     }
-    const st = try std.posix.fstatat(self.dir.fd, sub_path, std.posix.AT.SYMLINK_NOFOLLOW);
+    const st = std.posix.fstatat(self.dir.fd, sub_path, std.posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
     return Stat.fromPosix(st);
 }
 
-/// consiter using stat instead
+/// consider using stat instead
 /// checks if a path exists
 pub fn exists(self: WorkDir, path: []const u8) !bool {
     if (try self.stat(path)) |_| {
@@ -80,12 +141,17 @@ pub fn trashinfoWrite(self: WorkDir, allocator: Allocator, original_path: []cons
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
+    // resolve original_path relative to self.dir (not process cwd) so
+    // trashinfo records the correct absolute path even when WorkDir is
+    // not the process cwd.
+    const absolute_original_path = try self.realpathZ(arena, original_path);
+
     const trashinfo_filepath = try util.trashinfo.filepath(arena, std.fs.path.basename(trash_path));
     const file = try self.dir.createFile(trashinfo_filepath, .{});
     defer file.close();
     var buffer: [1024]u8 = undefined;
     var writer = file.writer(&buffer);
-    try util.trashinfo.writeContent(&writer.interface, original_path);
+    try util.trashinfo.writeContent(&writer.interface, absolute_original_path);
 }
 
 /// move a file, directory or sym_link to the trash
@@ -131,7 +197,7 @@ pub fn realpathZ(self: WorkDir, allocator: Allocator, path: []const u8) ![:0]con
     }
 }
 
-/// check if two paths resolve to same location on the filestem
+/// check if two paths resolve to same location on the filesystem
 pub fn isPathSameLocation(self: WorkDir, path_a: []const u8, path_b: []const u8) !bool {
     var buffer: [3 * std.fs.max_path_bytes]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
@@ -162,7 +228,7 @@ pub fn filepathOpen(self: WorkDir, filepath: []const u8, open_flags: std.fs.File
 
 pub fn filepathRead(self: WorkDir, allocator: Allocator, filepath: []const u8) ![:0]const u8 {
     const file = try self.filepathOpen(filepath, .{});
-    // TODO: can i remove this buffer? it seems like it might not be needed when streamReamaing to Writer.Allocating...
+    // TODO: can i remove this buffer? it seems like it might not be needed when streamRemaining to Writer.Allocating...
     var buffer: [4 * 1024]u8 = undefined;
     var file_reader = file.reader(&buffer);
     var allocating = std.Io.Writer.Allocating.init(allocator);

@@ -2,18 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const fs = std.fs;
 const test_config = @import("test_config");
-const Child = std.process.Child;
-
-const TrashResult = struct {
-    stderr: []u8,
-    stdout: []u8,
-    code: ?u8,
-
-    fn deinit(self: TrashResult) void {
-        testing.allocator.free(self.stderr);
-        testing.allocator.free(self.stdout);
-    }
-};
+const util = @import("test_util.zig");
 
 /// Resolve the trash binary to an absolute path once and cache it.
 var resolved_path_buf: [fs.max_path_bytes]u8 = undefined;
@@ -27,51 +16,8 @@ fn getTrashExePath() []const u8 {
     return result;
 }
 
-/// Runs the `trash` binary with the given args inside `cwd_dir`.
-fn runTrash(cwd_dir: fs.Dir, args: []const []const u8) TrashResult {
-    var argv: std.ArrayList([]const u8) = .empty;
-    defer argv.deinit(testing.allocator);
-
-    argv.append(testing.allocator, getTrashExePath()) catch @panic("OOM");
-    argv.appendSlice(testing.allocator, args) catch @panic("OOM");
-
-    var child = Child.init(argv.items, testing.allocator);
-    child.cwd_dir = cwd_dir;
-    child.stderr_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-
-    child.spawn() catch @panic("failed to spawn trash binary");
-
-    var stdout: std.ArrayList(u8) = .empty;
-    var stderr: std.ArrayList(u8) = .empty;
-    child.collectOutput(testing.allocator, &stdout, &stderr, 64 * 1024) catch @panic("failed to collect output");
-    const term = child.wait() catch @panic("failed to wait for trash binary");
-
-    const code: ?u8 = switch (term) {
-        .Exited => |c| c,
-        else => null,
-    };
-    return .{
-        .stderr = stderr.toOwnedSlice(testing.allocator) catch @panic("OOM"),
-        .stdout = stdout.toOwnedSlice(testing.allocator) catch @panic("OOM"),
-        .code = code,
-    };
-}
-
-fn writeFile(dir: fs.Dir, name: []const u8, content: []const u8) !void {
-    const file = try dir.createFile(name, .{});
-    defer file.close();
-    try file.writeAll(content);
-}
-
-fn fileExists(dir: fs.Dir, path: []const u8) bool {
-    _ = dir.statFile(path) catch return false;
-    return true;
-}
-
-fn dirExists(dir: fs.Dir, path: []const u8) bool {
-    const stat = dir.statFile(path) catch return false;
-    return stat.kind == .directory;
+fn runTrash(cwd_dir: fs.Dir, args: []const []const u8) util.CliResult {
+    return util.runBinary(getTrashExePath(), cwd_dir, args);
 }
 
 // ============================================================================
@@ -81,14 +27,14 @@ test "TEST: basic file trash removes file from cwd" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "hello.txt", "hello world");
+    try util.writeFile(tmp.dir, "hello.txt", "hello world");
 
     const result = runTrash(tmp.dir, &.{"hello.txt"});
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
     // file should be gone from the source directory
-    try testing.expect(!fileExists(tmp.dir, "hello.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "hello.txt"));
 
     // stderr should mention the trash destination
     try testing.expect(std.mem.indexOf(u8, result.stderr, "> $trash/") != null);
@@ -102,13 +48,13 @@ test "TEST: trash directory removes dir from cwd" {
     defer tmp.cleanup();
 
     try tmp.dir.makeDir("mydir");
-    try writeFile(tmp.dir, "mydir/file.txt", "inside dir");
+    try util.writeFile(tmp.dir, "mydir/file.txt", "inside dir");
 
     const result = runTrash(tmp.dir, &.{"mydir"});
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
-    try testing.expect(!dirExists(tmp.dir, "mydir"));
+    try testing.expect(!util.dirExists(tmp.dir, "mydir"));
 }
 
 // ============================================================================
@@ -172,17 +118,17 @@ test "TEST: trash multiple files removes all from cwd" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "a.txt", "aaa");
-    try writeFile(tmp.dir, "b.txt", "bbb");
-    try writeFile(tmp.dir, "c.txt", "ccc");
+    try util.writeFile(tmp.dir, "a.txt", "aaa");
+    try util.writeFile(tmp.dir, "b.txt", "bbb");
+    try util.writeFile(tmp.dir, "c.txt", "ccc");
 
     const result = runTrash(tmp.dir, &.{ "a.txt", "b.txt", "c.txt" });
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
-    try testing.expect(!fileExists(tmp.dir, "a.txt"));
-    try testing.expect(!fileExists(tmp.dir, "b.txt"));
-    try testing.expect(!fileExists(tmp.dir, "c.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "a.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "b.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "c.txt"));
 
     // should report summary for multiple files
     try testing.expect(std.mem.indexOf(u8, result.stderr, "trashed 3/3") != null);
@@ -195,8 +141,8 @@ test "TEST: silent flag suppresses verbose output" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "loud.txt", "data");
-    try writeFile(tmp.dir, "quiet.txt", "data");
+    try util.writeFile(tmp.dir, "loud.txt", "data");
+    try util.writeFile(tmp.dir, "quiet.txt", "data");
 
     // without --silent should produce "> $trash/" output
     const loud = runTrash(tmp.dir, &.{"loud.txt"});
@@ -235,7 +181,7 @@ test "TEST: trash mix of existing and nonexistent files" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "exists.txt", "data");
+    try util.writeFile(tmp.dir, "exists.txt", "data");
 
     const result = runTrash(tmp.dir, &.{ "exists.txt", "nope.txt" });
     defer result.deinit();
@@ -243,7 +189,7 @@ test "TEST: trash mix of existing and nonexistent files" {
     try testing.expect(result.code != null and result.code.? != 0);
 
     // the existing file should still have been trashed
-    try testing.expect(!fileExists(tmp.dir, "exists.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "exists.txt"));
 
     // stderr should mention the missing file
     try testing.expect(std.mem.indexOf(u8, result.stderr, "file not found: nope.txt") != null);

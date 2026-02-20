@@ -2,18 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const fs = std.fs;
 const test_config = @import("test_config");
-const Child = std.process.Child;
-
-const MoveResult = struct {
-    stderr: []u8,
-    stdout: []u8,
-    code: ?u8,
-
-    fn deinit(self: MoveResult) void {
-        testing.allocator.free(self.stderr);
-        testing.allocator.free(self.stdout);
-    }
-};
+const util = @import("test_util.zig");
 
 /// Resolve the move binary to an absolute path once and cache it.
 var resolved_path_buf: [fs.max_path_bytes]u8 = undefined;
@@ -27,55 +16,8 @@ fn getMoveExePath() []const u8 {
     return result;
 }
 
-/// Runs the `move` binary with the given args inside `cwd_dir`.
-fn runMove(cwd_dir: fs.Dir, args: []const []const u8) MoveResult {
-    var argv: std.ArrayList([]const u8) = .empty;
-    defer argv.deinit(testing.allocator);
-
-    argv.append(testing.allocator, getMoveExePath()) catch @panic("OOM");
-    argv.appendSlice(testing.allocator, args) catch @panic("OOM");
-
-    var child = Child.init(argv.items, testing.allocator);
-    child.cwd_dir = cwd_dir;
-    child.stderr_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-
-    child.spawn() catch @panic("failed to spawn move binary");
-
-    var stdout: std.ArrayList(u8) = .empty;
-    var stderr: std.ArrayList(u8) = .empty;
-    child.collectOutput(testing.allocator, &stdout, &stderr, 64 * 1024) catch @panic("failed to collect output");
-    const term = child.wait() catch @panic("failed to wait for move binary");
-
-    const code: ?u8 = switch (term) {
-        .Exited => |c| c,
-        else => null,
-    };
-    return .{
-        .stderr = stderr.toOwnedSlice(testing.allocator) catch @panic("OOM"),
-        .stdout = stdout.toOwnedSlice(testing.allocator) catch @panic("OOM"),
-        .code = code,
-    };
-}
-
-fn writeFile(dir: fs.Dir, name: []const u8, content: []const u8) !void {
-    const file = try dir.createFile(name, .{});
-    defer file.close();
-    try file.writeAll(content);
-}
-
-fn readFile(dir: fs.Dir, name: []const u8) ![]u8 {
-    return try dir.readFileAlloc(testing.allocator, name, 64 * 1024);
-}
-
-fn fileExists(dir: fs.Dir, path: []const u8) bool {
-    _ = dir.statFile(path) catch return false;
-    return true;
-}
-
-fn dirExists(dir: fs.Dir, path: []const u8) bool {
-    const stat = dir.statFile(path) catch return false;
-    return stat.kind == .directory;
+fn runMove(cwd_dir: fs.Dir, args: []const []const u8) util.CliResult {
+    return util.runBinary(getMoveExePath(), cwd_dir, args);
 }
 
 // ============================================================================
@@ -85,17 +27,17 @@ test "basic file move" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "src.txt", "hello move");
+    try util.writeFile(tmp.dir, "src.txt", "hello move");
 
     const result = runMove(tmp.dir, &.{ "src.txt", "dest.txt" });
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
     // src should be gone
-    try testing.expect(!fileExists(tmp.dir, "src.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "src.txt"));
 
     // dest should have the content
-    const content = try readFile(tmp.dir, "dest.txt");
+    const content = try util.readFile(tmp.dir, "dest.txt");
     defer testing.allocator.free(content);
     try testing.expectEqualStrings("hello move", content);
 }
@@ -107,15 +49,15 @@ test "move file into directory with trailing slash" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "file.txt", "into dir");
+    try util.writeFile(tmp.dir, "file.txt", "into dir");
     try tmp.dir.makeDir("dest");
 
     const result = runMove(tmp.dir, &.{ "file.txt", "dest/" });
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
-    try testing.expect(!fileExists(tmp.dir, "file.txt"));
-    const content = try readFile(tmp.dir, "dest/file.txt");
+    try testing.expect(!util.fileExists(tmp.dir, "file.txt"));
+    const content = try util.readFile(tmp.dir, "dest/file.txt");
     defer testing.allocator.free(content);
     try testing.expectEqualStrings("into dir", content);
 }
@@ -127,22 +69,22 @@ test "move multiple files into directory" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "a.txt", "aaa");
-    try writeFile(tmp.dir, "b.txt", "bbb");
+    try util.writeFile(tmp.dir, "a.txt", "aaa");
+    try util.writeFile(tmp.dir, "b.txt", "bbb");
     try tmp.dir.makeDir("dest");
 
     const result = runMove(tmp.dir, &.{ "a.txt", "b.txt", "dest/" });
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
-    try testing.expect(!fileExists(tmp.dir, "a.txt"));
-    try testing.expect(!fileExists(tmp.dir, "b.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "a.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "b.txt"));
 
-    const a = try readFile(tmp.dir, "dest/a.txt");
+    const a = try util.readFile(tmp.dir, "dest/a.txt");
     defer testing.allocator.free(a);
     try testing.expectEqualStrings("aaa", a);
 
-    const b = try readFile(tmp.dir, "dest/b.txt");
+    const b = try util.readFile(tmp.dir, "dest/b.txt");
     defer testing.allocator.free(b);
     try testing.expectEqualStrings("bbb", b);
 }
@@ -155,14 +97,14 @@ test "rename flag renames file in same directory" {
     defer tmp.cleanup();
 
     try tmp.dir.makeDir("sub");
-    try writeFile(tmp.dir, "sub/old.txt", "rename me");
+    try util.writeFile(tmp.dir, "sub/old.txt", "rename me");
 
     const result = runMove(tmp.dir, &.{ "--rename", "sub/old.txt", "new.txt" });
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
-    try testing.expect(!fileExists(tmp.dir, "sub/old.txt"));
-    const content = try readFile(tmp.dir, "sub/new.txt");
+    try testing.expect(!util.fileExists(tmp.dir, "sub/old.txt"));
+    const content = try util.readFile(tmp.dir, "sub/new.txt");
     defer testing.allocator.free(content);
     try testing.expectEqualStrings("rename me", content);
 }
@@ -174,8 +116,8 @@ test "rename flag with multiple sources errors" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "a.txt", "a");
-    try writeFile(tmp.dir, "b.txt", "b");
+    try util.writeFile(tmp.dir, "a.txt", "a");
+    try util.writeFile(tmp.dir, "b.txt", "b");
     try tmp.dir.makeDir("dest");
 
     const result = runMove(tmp.dir, &.{ "--rename", "a.txt", "b.txt", "dest/" });
@@ -191,7 +133,7 @@ test "rename flag with slash in value errors" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "src.txt", "data");
+    try util.writeFile(tmp.dir, "src.txt", "data");
 
     const result = runMove(tmp.dir, &.{ "--rename", "src.txt", "sub/new.txt" });
     defer result.deinit();
@@ -206,8 +148,8 @@ test "silent flag suppresses move output" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "loud.txt", "data");
-    try writeFile(tmp.dir, "quiet.txt", "data");
+    try util.writeFile(tmp.dir, "loud.txt", "data");
+    try util.writeFile(tmp.dir, "quiet.txt", "data");
 
     // without --silent should produce output
     const loud = runMove(tmp.dir, &.{ "loud.txt", "loud_dest.txt" });
@@ -226,8 +168,8 @@ test "silent flag suppresses multi-move summary" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "x.txt", "x");
-    try writeFile(tmp.dir, "y.txt", "y");
+    try util.writeFile(tmp.dir, "x.txt", "x");
+    try util.writeFile(tmp.dir, "y.txt", "y");
     try tmp.dir.makeDir("dest");
 
     const result = runMove(tmp.dir, &.{ "-s", "x.txt", "y.txt", "dest/" });
@@ -243,23 +185,23 @@ test "backup flag creates backup from dest not src" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "src.txt", "new content");
-    try writeFile(tmp.dir, "dest.txt", "old content");
+    try util.writeFile(tmp.dir, "src.txt", "new content");
+    try util.writeFile(tmp.dir, "dest.txt", "old content");
 
     const result = runMove(tmp.dir, &.{ "--backup", "src.txt", "dest.txt" });
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
     // src should be gone
-    try testing.expect(!fileExists(tmp.dir, "src.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "src.txt"));
 
     // dest should have new content
-    const dest_content = try readFile(tmp.dir, "dest.txt");
+    const dest_content = try util.readFile(tmp.dir, "dest.txt");
     defer testing.allocator.free(dest_content);
     try testing.expectEqualStrings("new content", dest_content);
 
     // backup should exist with OLD content (from dest, not src)
-    const backup_content = try readFile(tmp.dir, "dest.txt.backup~");
+    const backup_content = try util.readFile(tmp.dir, "dest.txt.backup~");
     defer testing.allocator.free(backup_content);
     try testing.expectEqualStrings("old content", backup_content);
 }
@@ -284,7 +226,7 @@ test "src and dest same location produces error" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "same.txt", "data");
+    try util.writeFile(tmp.dir, "same.txt", "data");
 
     // without a clobber flag, dest-exists fires first
     const result = runMove(tmp.dir, &.{ "same.txt", "same.txt" });
@@ -306,8 +248,8 @@ test "dest exists without clobber flag produces error" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "src.txt", "new");
-    try writeFile(tmp.dir, "dest.txt", "old");
+    try util.writeFile(tmp.dir, "src.txt", "new");
+    try util.writeFile(tmp.dir, "dest.txt", "old");
 
     const result = runMove(tmp.dir, &.{ "src.txt", "dest.txt" });
     defer result.deinit();
@@ -315,8 +257,8 @@ test "dest exists without clobber flag produces error" {
     try testing.expect(std.mem.indexOf(u8, result.stderr, "dest path exists") != null);
 
     // both files should still exist (no partial move)
-    try testing.expect(fileExists(tmp.dir, "src.txt"));
-    try testing.expect(fileExists(tmp.dir, "dest.txt"));
+    try testing.expect(util.fileExists(tmp.dir, "src.txt"));
+    try testing.expect(util.fileExists(tmp.dir, "dest.txt"));
 }
 
 // ============================================================================
@@ -363,7 +305,7 @@ test "rename with slash in dest errors about slash not remove" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeFile(tmp.dir, "file.txt", "data");
+    try util.writeFile(tmp.dir, "file.txt", "data");
     try tmp.dir.makeDir("dest");
 
     // --rename with dest containing / should error about the slash
@@ -396,15 +338,15 @@ test "move directory" {
     defer tmp.cleanup();
 
     try tmp.dir.makeDir("srcdir");
-    try writeFile(tmp.dir, "srcdir/file.txt", "dir content");
+    try util.writeFile(tmp.dir, "srcdir/file.txt", "dir content");
 
     const result = runMove(tmp.dir, &.{ "srcdir", "destdir" });
     defer result.deinit();
     try testing.expectEqual(@as(?u8, 0), result.code);
 
-    try testing.expect(!dirExists(tmp.dir, "srcdir"));
-    try testing.expect(dirExists(tmp.dir, "destdir"));
-    const content = try readFile(tmp.dir, "destdir/file.txt");
+    try testing.expect(!util.dirExists(tmp.dir, "srcdir"));
+    try testing.expect(util.dirExists(tmp.dir, "destdir"));
+    const content = try util.readFile(tmp.dir, "destdir/file.txt");
     defer testing.allocator.free(content);
     try testing.expectEqualStrings("dir content", content);
 }

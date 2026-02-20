@@ -51,7 +51,7 @@ pub fn isString(T: type) bool {
         else => switch (@typeInfo(T)) {
             .array => |a| return a.child == u8,
             .pointer => |t| return isString(t.child),
-            .optional => |t| isString(t.child),
+            .optional => |t| return isString(t.child),
             else => return false,
         },
     }
