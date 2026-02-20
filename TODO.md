@@ -1,6 +1,4 @@
 # TODO 
-* `copy` should stat dest not statNoFollow on `--merge`
-  * or maby there should be a -S --symlink or something
 * `copy` --progress display a progress bar instead of normal verbose
 
 * patch move across mount points error (trash and move) --multi-disk -m
@@ -31,6 +29,4 @@ thread 355486 panic: unexpected error: RenameAcrossMountPoints
     ^
 ???:?:?: 0x0 in ??? (???)
 fish: Job 1, 'trash pic' terminated by signal SIGABRT (Abort)
-  
 ```
-

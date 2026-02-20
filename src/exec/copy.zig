@@ -308,7 +308,7 @@ pub const Context = struct {
     flag_version: bool = false,
     flag_silent: bool = false,
     flag_dir_style: DirStyle = .NoCopy,
-    flag_clobber_style: ClobberStyle = .NoClobber,
+    flag_clobber_style: util.ClobberStyle = .NoClobber,
     flag_create: bool = false,
     flag_parser: FlagParser = .{
         .parseFn = implParseFn,
@@ -347,19 +347,6 @@ pub const Context = struct {
         }
     };
 
-    pub const ClobberStyle = enum(u8) {
-        NoClobber = 0,
-        Trash = 1,
-        Backup = 2,
-
-        /// greater priorty wins
-        pub fn setPriortity(self: *ClobberStyle, value: ClobberStyle) void {
-            if (@intFromEnum(value) > @intFromEnum(self.*)) {
-                self.* = value;
-            }
-        }
-    };
-
     const Flags = enum {
         @"--help",
         h,
@@ -389,8 +376,8 @@ pub const Context = struct {
                     .v, .@"--version" => self.flag_version = true,
                     .s, .@"--silent" => self.flag_silent = true,
                     .c, .@"--create" => self.flag_create = true,
-                    .t, .@"--trash" => self.flag_clobber_style.setPriortity(.Trash),
-                    .b, .@"--backup" => self.flag_clobber_style.setPriortity(.Backup),
+                    .t, .@"--trash" => self.flag_clobber_style.prioritySet(.Trash),
+                    .b, .@"--backup" => self.flag_clobber_style.prioritySet(.Backup),
                     .d, .@"--dir" => self.flag_dir_style.setPriortity(.Dir),
                     .m, .@"--merge" => self.flag_dir_style.setPriortity(.Merge),
                 },

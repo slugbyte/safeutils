@@ -74,20 +74,20 @@ Usage: copy src.. dest (--flags)
 ```
 Usage: move src.. dest (--flags)
   Move or rename a file, or move multiple files into a directory.
-  When moveing files into a directory dest must have '/' at the end.
+  When moving files into a directory dest must have '/' at the end.
   When moving multiple files last path must be a directory and have a '/' at the end.
 
-  Move will not partially move src.. paths. Everyting must move or nothing will move.
+  Move will not partially move src.. paths. Everything must move or nothing will move.
 
   Clobber Style:
     (default)     Print error and exit
     -t --trash    Move original dest to trash
     -b --backup   Rename original dest (original).backup~
 
-    If both clober flags are found it choose backup over trash.
+    If both clobber flags are found it will choose backup over trash.
 
   Rename:
-    -r --rename   Replace only the src basename with dest. 
+    -r --rename   Replace only the src basename with dest.
                   Only works with one src path.
     example:
       ($ move --rename /example/oldname.zig newname.zig) results in /example/newname.zig

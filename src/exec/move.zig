@@ -15,20 +15,20 @@ const WorkDir = util.WorkDir;
 pub const help_msg =
     \\Usage: move src.. dest (--flags)
     \\  Move or rename a file, or move multiple files into a directory.
-    \\  When moveing files into a directory dest must have '/' at the end.
+    \\  When moving files into a directory dest must have '/' at the end.
     \\  When moving multiple files last path must be a directory and have a '/' at the end.
     \\
-    \\  Move will not partially move src.. paths. Everyting must move or nothing will move.
+    \\  Move will not partially move src.. paths. Everything must move or nothing will move.
     \\
     \\  Clobber Style:
     \\    (default)     Print error and exit
     \\    -t --trash    Move original dest to trash
     \\    -b --backup   Rename original dest (original).backup~
     \\
-    \\    If both clober flags are found it choose backup over trash.
+    \\    If both clobber flags are found it will choose backup over trash.
     \\
     \\  Rename:
-    \\    -r --rename   Replace only the src basename with dest. 
+    \\    -r --rename   Replace only the src basename with dest.
     \\                  Only works with one src path.
     \\    example:
     \\      ($ move --rename /example/oldname.zig newname.zig) results in /example/newname.zig
@@ -75,6 +75,8 @@ pub fn main() !void {
         2 => {
             const src_path = ctx.positionals[0];
             var dest_path = ctx.positionals[1];
+
+            // CHECK SRC EXISTS
             if (try ctx.cwd.stat(src_path) == null) {
                 try ctx.reporter.pushError("src not found: ({s})", .{src_path});
             }
@@ -82,27 +84,33 @@ pub fn main() !void {
                 return ctx.reporter.EXIT_WITH_REPORT(1);
             }
 
-            if (try ctx.cwd.stat(dest_path)) |dest_stat| {
-                const is_parrent = try checkDest(&ctx, dest_path, dest_stat, false);
+            // APPLY --rename REWRITE (must happen before dest validation)
+            if (ctx.flag_rename) {
+                if (std.mem.indexOf(u8, dest_path, "/")) |_| {
+                    try ctx.reporter.pushError("--rename value may not include a '/'", .{});
+                }
+                dest_path = try util.fmtZ(arena, "{s}/{s}", .{ dirname(src_path) orelse "./", dest_path });
+                if (ctx.reporter.isTrouble()) {
+                    return ctx.reporter.EXIT_WITH_REPORT(1);
+                }
+            }
+
+            // CHECK DEST AND CLOBBER
+            if (try ctx.cwd.statNoFollow(dest_path)) |dest_stat| {
+                const is_parent = try checkDest(&ctx, dest_path, dest_stat, false);
                 if (ctx.reporter.isTrouble()) {
                     return ctx.reporter.EXIT_WITH_REPORT(1);
                 }
 
-                if (is_parrent) {
+                if (is_parent) {
                     const real_dest_path = try util.fmt(arena, "{s}{s}", .{ dest_path, basename(src_path) });
-                    if (try ctx.cwd.stat(real_dest_path)) |real_dest_stat| {
+                    if (try ctx.cwd.statNoFollow(real_dest_path)) |real_dest_stat| {
                         _ = try checkDest(&ctx, real_dest_path, real_dest_stat, true);
                     }
                 }
             }
 
-            if (ctx.flag_rename) {
-                if (std.mem.indexOf(u8, dest_path, "/")) |_| {
-                    try ctx.reporter.pushError("--rename value may not inculed a '/'", .{});
-                }
-                dest_path = try util.fmtZ(arena, "{s}/{s}", .{ dirname(src_path) orelse "./", dest_path });
-            }
-
+            // CHECK SAME LOCATION
             if (try ctx.cwd.isPathSameLocation(src_path, dest_path)) {
                 try ctx.reporter.pushError("src and dest cannot be same location: ({s} == {s})", .{ src_path, dest_path });
             }
@@ -117,6 +125,11 @@ pub fn main() !void {
             const src_path_list = ctx.positionals[0 .. ctx.positionals.len - 1];
             const dest_path: [:0]const u8 = ctx.positionals[ctx.positionals.len - 1];
 
+            if (ctx.flag_rename) {
+                try ctx.reporter.pushError("--rename only works with one src path", .{});
+                return ctx.reporter.EXIT_WITH_REPORT(1);
+            }
+
             { // CHECK SRC PATHS EXIST
                 for (src_path_list) |src_path| {
                     if (try ctx.cwd.stat(src_path) == null) {
@@ -130,7 +143,7 @@ pub fn main() !void {
             }
 
             { // CHECK DEST IS A VALID DIRECTORY
-                if (try ctx.cwd.stat(dest_path)) |dest_stat| {
+                if (try ctx.cwd.statNoFollow(dest_path)) |dest_stat| {
                     _ = try checkDest(&ctx, dest_path, dest_stat, false);
                 } else {
                     try ctx.reporter.pushError("dest must be a directory.", .{});
@@ -145,7 +158,7 @@ pub fn main() !void {
                 for (src_path_list) |src_path| {
                     const real_dest_path = try util.fmt(arena, "{s}{s}", .{ dest_path, basename(src_path) });
 
-                    if (try ctx.cwd.stat(real_dest_path)) |real_dest_stat| {
+                    if (try ctx.cwd.statNoFollow(real_dest_path)) |real_dest_stat| {
                         _ = try checkDest(&ctx, real_dest_path, real_dest_stat, true);
                     }
                     if (try ctx.cwd.isPathSameLocation(src_path, real_dest_path)) {
@@ -161,7 +174,7 @@ pub fn main() !void {
             for (ctx.positionals[0 .. ctx.positionals.len - 1]) |src_path| {
                 try move(&ctx, src_path, dest_path);
             }
-            util.log("moved {d}/{d} files", .{ src_path_list.len, src_path_list.len });
+            if (!ctx.flag_silent) util.log("moved {d}/{d} files", .{ src_path_list.len, src_path_list.len });
         },
     }
 
@@ -182,7 +195,7 @@ pub fn checkDest(
             if (!dest_is_into_path) {
                 if (util.endsWith(dest_path, "/")) {
                     if (ctx.flag_rename) {
-                        try ctx.reporter.pushError("--remove cannot be used when moving into a directory", .{});
+                        try ctx.reporter.pushError("--rename cannot be used when moving into a directory", .{});
                     }
                     return true;
                 }
@@ -237,14 +250,14 @@ pub fn move(ctx: *Context, src_path: [:0]const u8, dest_path: [:0]const u8) !voi
         switch (ctx.flag_clobber_style) {
             .NoClobber => ctx.reporter.PANIC_WITH_REPORT("NoClobber should be unreachable", .{}),
             .Trash => {
-                const stat = (try ctx.cwd.stat(real_dest_path)).?;
+                const stat = (try ctx.cwd.statNoFollow(real_dest_path)).?;
                 const trash_path = try ctx.cwd.trash(ctx.arena, real_dest_path, stat.kind);
                 if (!ctx.flag_silent) try ctx.reporter.pushWarning("trashed: {s} > $trash/{s}", .{ real_dest_path, basename(trash_path) });
             },
             .Backup => {
-                const path_destinaton_backup = try util.fmtZ(ctx.arena, "{s}.backup~", .{src_path});
+                const path_destinaton_backup = try util.fmtZ(ctx.arena, "{s}.backup~", .{real_dest_path});
                 if (try ctx.cwd.exists(path_destinaton_backup)) {
-                    const stat = (try ctx.cwd.stat(path_destinaton_backup)).?;
+                    const stat = (try ctx.cwd.statNoFollow(path_destinaton_backup)).?;
                     const trash_path = try ctx.cwd.trash(ctx.arena, path_destinaton_backup, stat.kind);
                     if (!ctx.flag_silent) try ctx.reporter.pushWarning("trashed: {s} > $trash/{s}", .{ path_destinaton_backup, basename(trash_path) });
                 }
@@ -270,7 +283,7 @@ const Context = struct {
     flag_version: bool = false,
     flag_rename: bool = false,
     flag_silent: bool = false,
-    flag_clobber_style: ClobberStyle = .NoClobber,
+    flag_clobber_style: util.ClobberStyle = .NoClobber,
     flag_parser: FlagParser = .{
         .parseFn = Context.implParseFn,
         .setProgramPathFn = FlagParser.noopSetProgramPath,
@@ -297,18 +310,6 @@ const Context = struct {
         util.debugPrintFlagFields(Context, self.*);
         std.debug.print("---------------------------------------------------------------------------------\n", .{});
     }
-
-    pub const ClobberStyle = enum(u3) {
-        NoClobber = 0, // DEFAULT
-        Trash = 1,
-        Backup = 2,
-
-        pub fn prioritySet(self: *ClobberStyle, value: ClobberStyle) void {
-            if (@intFromEnum(self.*) < @intFromEnum(value)) {
-                self.* = value;
-            }
-        }
-    };
 
     pub const Flags = enum {
         @"--help",

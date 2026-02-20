@@ -24,6 +24,19 @@ pub const Allocator = std.mem.Allocator;
 pub const assert = std.debug.assert;
 pub const panic = std.debug.panic;
 
+pub const ClobberStyle = enum(u8) {
+    NoClobber = 0, // DEFAULT
+    Trash = 1,
+    Backup = 2,
+
+    /// Higher priority wins. If both --trash and --backup are set, Backup wins.
+    pub fn prioritySet(self: *ClobberStyle, value: ClobberStyle) void {
+        if (@intFromEnum(self.*) < @intFromEnum(value)) {
+            self.* = value;
+        }
+    }
+};
+
 pub fn log(comptime format: []const u8, arg: anytype) void {
     var buffer: [1024]u8 = undefined;
     const msg = std.fmt.bufPrint(&buffer, format, arg) catch return;
