@@ -6,6 +6,10 @@ pub fn filepath(allocator: Allocator, filename: []const u8) ![]const u8 {
     var trash_dirpath_sa = util.StackFilepathAllocator.empty;
     const trash_dirpath = try util.dirpath.trashInfo(trash_dirpath_sa.allocatorInvalidatePrevious());
 
+    return filepathAt(allocator, trash_dirpath, filename);
+}
+
+pub fn filepathAt(allocator: Allocator, info_dirpath: []const u8, filename: []const u8) ![]const u8 {
     var trashinfo_name_sa = util.StackFilenameAllocator.empty;
     const trashinfo_name = try util.fmt(
         trashinfo_name_sa.allocatorInvalidatePrevious(),
@@ -14,7 +18,7 @@ pub fn filepath(allocator: Allocator, filename: []const u8) ![]const u8 {
     );
 
     return std.fs.path.join(allocator, &.{
-        trash_dirpath,
+        info_dirpath,
         trashinfo_name,
     });
 }

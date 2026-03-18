@@ -20,6 +20,10 @@ fn runMove(cwd_dir: fs.Dir, args: []const []const u8) util.CliResult {
     return util.runBinary(getMoveExePath(), cwd_dir, args);
 }
 
+fn runMoveWithEnv(cwd_dir: fs.Dir, args: []const []const u8, env_overrides: []const util.EnvVar) util.CliResult {
+    return util.runBinaryWithEnv(getMoveExePath(), cwd_dir, args, env_overrides);
+}
+
 // ============================================================================
 // Basic move
 // ============================================================================
@@ -239,6 +243,92 @@ test "src and dest same location produces error" {
     defer result2.deinit();
     try testing.expect(result2.code != null and result2.code.? != 0);
     try testing.expect(std.mem.indexOf(u8, result2.stderr, "src and dest cannot be same location") != null);
+}
+
+test "src and effective dest same location into dir errors" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "same.txt", "data");
+
+    const result = runMove(tmp.dir, &.{ "--backup", "same.txt", "./" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "src and dest cannot be same location") != null);
+
+    const content = try util.readFile(tmp.dir, "same.txt");
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("data", content);
+}
+
+test "dangling symlink source can be moved" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "target.txt", "target");
+    try tmp.dir.symLink("target.txt", "dangling.link", .{});
+    try tmp.dir.deleteFile("target.txt");
+
+    const result = runMove(tmp.dir, &.{ "dangling.link", "moved.link" });
+    defer result.deinit();
+    try testing.expectEqual(@as(?u8, 0), result.code);
+
+    var old_link_buffer: [fs.max_path_bytes]u8 = undefined;
+    const old_link = tmp.dir.readLink("dangling.link", &old_link_buffer) catch null;
+    try testing.expect(old_link == null);
+
+    var new_link_buffer: [fs.max_path_bytes]u8 = undefined;
+    const new_link = try tmp.dir.readLink("moved.link", &new_link_buffer);
+    try testing.expectEqualStrings("target.txt", new_link);
+}
+
+test "trash clobber moves existing dest into isolated trash dir" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "new content");
+    try util.writeFile(tmp.dir, "dest.txt", "old content");
+    try tmp.dir.makePath("tmp_trash/files");
+    try tmp.dir.makePath("tmp_trash/info");
+
+    const result = runMoveWithEnv(
+        tmp.dir,
+        &.{ "--trash", "src.txt", "dest.txt" },
+        &.{
+            .{ .key = "SAFEUTILS_TRASH_DIR", .value = "tmp_trash/files" },
+            .{ .key = "SAFEUTILS_TRASH_INFO_DIR", .value = "tmp_trash/info" },
+        },
+    );
+    defer result.deinit();
+
+    try testing.expectEqual(@as(?u8, 0), result.code);
+    try testing.expect(!util.fileExists(tmp.dir, "src.txt"));
+
+    const dest_content = try util.readFile(tmp.dir, "dest.txt");
+    defer testing.allocator.free(dest_content);
+    try testing.expectEqualStrings("new content", dest_content);
+
+    const trashed = try util.readFile(tmp.dir, "tmp_trash/files/dest.txt");
+    defer testing.allocator.free(trashed);
+    try testing.expectEqualStrings("old content", trashed);
+}
+
+test "multi-source precheck failure prevents all moves" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "a.txt", "aaa");
+    try tmp.dir.makeDir("dest");
+
+    const result = runMove(tmp.dir, &.{ "a.txt", "missing.txt", "dest/" });
+    defer result.deinit();
+
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "src path not found") != null);
+    try testing.expect(util.fileExists(tmp.dir, "a.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "dest/a.txt"));
 }
 
 // ============================================================================

@@ -2,10 +2,10 @@ const std = @import("std");
 const util = @import("../root.zig");
 const builtin = @import("builtin");
 const FilenameBumper = @import("./FilenameBumper.zig");
-const dirpath = @import("./dirpath.zig");
 
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
+const TrashPaths = util.trash_paths.TrashPaths;
 const WorkDir = @This();
 dir: std.fs.Dir,
 
@@ -137,6 +137,11 @@ pub fn exists(self: WorkDir, path: []const u8) !bool {
 }
 
 pub fn trashinfoWrite(self: WorkDir, allocator: Allocator, original_path: []const u8, trash_path: []const u8) !void {
+    const trash_paths = try util.trash_paths.resolve(allocator, .{});
+    return self.trashinfoWriteAt(allocator, trash_paths, original_path, trash_path);
+}
+
+pub fn trashinfoWriteAt(self: WorkDir, allocator: Allocator, trash_paths: TrashPaths, original_path: []const u8, trash_path: []const u8) !void {
     var arena_instance = std.heap.ArenaAllocator.init(allocator);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
@@ -146,7 +151,8 @@ pub fn trashinfoWrite(self: WorkDir, allocator: Allocator, original_path: []cons
     // not the process cwd.
     const absolute_original_path = try self.realpathZ(arena, original_path);
 
-    const trashinfo_filepath = try util.trashinfo.filepath(arena, std.fs.path.basename(trash_path));
+    const info_dir = trash_paths.info_dir orelse return error.TrashInfoDirRequired;
+    const trashinfo_filepath = try util.trashinfo.filepathAt(arena, info_dir, std.fs.path.basename(trash_path));
     const file = try self.dir.createFile(trashinfo_filepath, .{});
     defer file.close();
     var buffer: [1024]u8 = undefined;
@@ -156,24 +162,26 @@ pub fn trashinfoWrite(self: WorkDir, allocator: Allocator, original_path: []cons
 
 /// move a file, directory or sym_link to the trash
 pub fn trash(self: WorkDir, allocator: Allocator, path: []const u8, kind: std.fs.File.Kind) ![]const u8 {
+    const trash_paths = try util.trash_paths.resolve(allocator, .{});
+    return self.trashAt(allocator, trash_paths, path, kind);
+}
+
+pub fn trashAt(self: WorkDir, allocator: Allocator, trash_paths: TrashPaths, path: []const u8, kind: std.fs.File.Kind) ![]const u8 {
     switch (kind) {
         .file, .directory, .sym_link => {
             const file_name = std.fs.path.basename(path);
 
-            var trash_dirpath_sa = util.StackFilepathAllocator.empty;
-            const trash_dirpath = try dirpath.trash(trash_dirpath_sa.allocatorInvalidatePrevious());
-
             var filename_bumper = FilenameBumper.parse(file_name);
             var trash_path_sa = util.StackFilepathAllocator.empty;
-            var trash_path = try filename_bumper.fmtFilepath(trash_path_sa.allocatorInvalidatePrevious(), trash_dirpath);
+            var trash_path = try filename_bumper.fmtFilepath(trash_path_sa.allocatorInvalidatePrevious(), trash_paths.files_dir);
 
             while (try self.exists(trash_path)) {
                 filename_bumper.bump();
-                trash_path = try filename_bumper.fmtFilepath(trash_path_sa.allocatorInvalidatePrevious(), trash_dirpath);
+                trash_path = try filename_bumper.fmtFilepath(trash_path_sa.allocatorInvalidatePrevious(), trash_paths.files_dir);
             }
             try self.move(path, trash_path);
             if (builtin.os.tag == .linux) {
-                try self.trashinfoWrite(allocator, path, trash_path);
+                try self.trashinfoWriteAt(allocator, trash_paths, path, trash_path);
             }
             return allocator.dupe(u8, trash_path);
         },

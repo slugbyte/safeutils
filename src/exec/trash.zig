@@ -8,6 +8,7 @@ const WorkDir = util.WorkDir;
 const Reporter = util.Reporter;
 const FlagParser = util.FlagParser;
 const NullByteDetectorWriter = util.NullByteDetectorWriter;
+const TrashPaths = util.trash_paths.TrashPaths;
 
 pub const help_msg =
     \\USAGE: trash files.. (--flags)
@@ -30,6 +31,8 @@ pub const help_msg =
     \\    --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
     \\
     \\  Other Flags:
+    \\  --trash-dir             Override trash files dir. env: SAFEUTILS_TRASH_DIR
+    \\  --trash-info-dir        Override trash info dir. env: SAFEUTILS_TRASH_INFO_DIR
     \\  -s --silent               Only print errors.
     \\  -v --version              Print version.
     \\  -h --help                 Display this help.
@@ -43,6 +46,8 @@ const FZFMode = enum {
     Revert,
     Fetch,
 };
+
+const MAX_FZF_SELECTION_BYTES: usize = 1024 * 1024;
 
 const UndoData = struct {
     trashinfo_path: []const u8,
@@ -113,7 +118,7 @@ pub fn main() !void {
             try ctx.reporter.pushWarning("file not found: {s}", .{path});
             continue;
         };
-        const trash_path = ctx.cwd.trash(ctx.arena, path, stat.kind) catch |err| switch (err) {
+        const trash_path = ctx.cwd.trashAt(ctx.arena, ctx.trash_paths, path, stat.kind) catch |err| switch (err) {
             else => ctx.reporter.PANIC_WITH_REPORT("unexpected error: {t}", .{err}),
             error.TrashFileKindNotSupported => {
                 fail_count +|= 1;
@@ -146,12 +151,12 @@ pub const RevertInfo = struct {
 
     pub fn init(ctx: *Context, trash_name: []const u8) !RevertInfo {
         const basename = std.fs.path.basename(trash_name);
-        const trash_dirpath = try util.dirpath.trash(ctx.arena);
         const trash_path = try std.fs.path.join(ctx.arena, &.{
-            trash_dirpath,
+            ctx.trash_paths.files_dir,
             basename,
         });
-        const trashinfo_path = try util.trashinfo.filepath(ctx.arena, basename);
+        const info_dir = ctx.trash_paths.info_dir orelse return error.TrashInfoDirRequired;
+        const trashinfo_path = try util.trashinfo.filepathAt(ctx.arena, info_dir, basename);
 
         const link_buffer = try ctx.arena.alloc(u8, std.fs.max_path_bytes);
         const trash_link = ctx.cwd.dir.readLink(trash_path, link_buffer) catch null;
@@ -304,6 +309,7 @@ pub fn fzfPreview(ctx: *Context, trash_name: []const u8) !void {
 pub fn revertTrash(ctx: *Context, trash_name: []const u8) !void {
     if (builtin.os.tag != .linux) {
         try ctx.reporter.pushError("--revert is only supported on linux", .{});
+        ctx.reporter.EXIT_WITH_REPORT(1);
     } else {
         const revert_info = try RevertInfo.init(ctx, trash_name);
         try ctx.cwd.move(revert_info.trash_path, revert_info.revert_path);
@@ -317,6 +323,7 @@ pub fn revertTrash(ctx: *Context, trash_name: []const u8) !void {
 pub fn fetchTrash(ctx: *Context, trash_name: []const u8) !void {
     if (builtin.os.tag != .linux) {
         try ctx.reporter.pushError("--fetch is only supported on linux", .{});
+        ctx.reporter.EXIT_WITH_REPORT(1);
     } else {
         const revert_info = try RevertInfo.init(ctx, trash_name);
         const basename = std.fs.path.basename(revert_info.revert_path);
@@ -330,24 +337,25 @@ pub fn fetchTrash(ctx: *Context, trash_name: []const u8) !void {
 pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
     if (builtin.os.tag != .linux) {
         try ctx.reporter.pushError("--fetch and --revert are only supported on linux", .{});
+        ctx.reporter.EXIT_WITH_REPORT(1);
     } else {
         if (!util.term.isTTY()) {
             try ctx.reporter.pushError("fzf needs stdout to be a tty", .{});
             ctx.reporter.EXIT_WITH_REPORT(1);
         }
-        const trash_dirpath = try util.dirpath.trash(ctx.arena);
-        var trash_dir = try ctx.cwd.dir.openDir(trash_dirpath, .{ .iterate = true });
+        var trash_dir = try ctx.cwd.dir.openDir(ctx.trash_paths.files_dir, .{ .iterate = true });
         defer trash_dir.close();
 
         var fzf_option_list = std.ArrayList(u8).empty;
         var iter = trash_dir.iterate();
+        const info_dir = ctx.trash_paths.info_dir orelse return error.TrashInfoDirRequired;
         fill_fzf_option_list: while (try iter.next()) |entry| {
             // filter out files with non ascii names (this one had me stumped for a while)
             for (entry.name) |char| {
                 if (!std.ascii.isAscii(char)) continue :fill_fzf_option_list;
             }
 
-            const trashinfo_path = try util.trashinfo.filepath(ctx.arena, entry.name);
+            const trashinfo_path = try util.trashinfo.filepathAt(ctx.arena, info_dir, entry.name);
 
             if (try ctx.cwd.exists(trashinfo_path)) {
                 try fzf_option_list.appendSlice(ctx.arena, entry.name);
@@ -374,7 +382,19 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
                 break :blk "";
             }
         };
-        const preview_command = try util.fmt(ctx.arena, "trash --fzf-preview {{}} {s}", .{preview_command_viu_flags});
+        const preview_command_trash_flags: []const u8 = blk: {
+            var flags = std.ArrayList(u8).empty;
+            if (ctx.flag_trash_dir) |path| {
+                try flags.appendSlice(ctx.arena, " --trash-dir ");
+                try flags.appendSlice(ctx.arena, path);
+            }
+            if (ctx.flag_trash_info_dir) |path| {
+                try flags.appendSlice(ctx.arena, " --trash-info-dir ");
+                try flags.appendSlice(ctx.arena, path);
+            }
+            break :blk flags.items;
+        };
+        const preview_command = try util.fmt(ctx.arena, "trash --fzf-preview {{}} {s}{s}", .{ preview_command_viu_flags, preview_command_trash_flags });
         const preview_window_default = if (preview_horizontal) "top:80%" else "right:60%";
         const preview_window = ctx.flag_fzf_preview_window orelse preview_window_default;
         var child = try util.exec.spawn(ctx.arena, .{
@@ -396,7 +416,17 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
         try child.stdin.?.writeAll(std.mem.trimEnd(u8, fzf_option_list.items, "\n"));
         child.stdin.?.close();
         child.stdin = null;
-        const revert_path = util.trim(try child.stdout.?.readToEndAlloc(ctx.arena, std.fs.max_path_bytes));
+        const revert_path_raw = child.stdout.?.readToEndAlloc(ctx.arena, MAX_FZF_SELECTION_BYTES) catch |err| switch (err) {
+            error.FileTooBig => {
+                try ctx.reporter.pushError(
+                    "fzf selection output exceeded {d} bytes; reduce selected items or narrow the query",
+                    .{MAX_FZF_SELECTION_BYTES},
+                );
+                ctx.reporter.EXIT_WITH_REPORT(1);
+            },
+            else => return err,
+        };
+        const revert_path = util.trim(revert_path_raw);
         const term = try child.wait();
 
         switch (term) {
@@ -435,6 +465,7 @@ const Context = struct {
     arena: Allocator,
     reporter: Reporter,
     cwd: WorkDir,
+    trash_paths: TrashPaths = undefined,
 
     args: util.ArgIterator = undefined,
     positionals: [][:0]const u8 = undefined,
@@ -447,6 +478,8 @@ const Context = struct {
     flag_fzf_preview_viu: bool = false,
     flag_fzf_preview_viu_width: ?usize = null,
     flag_fzf_preview_window: ?[:0]const u8 = null,
+    flag_trash_dir: ?[:0]const u8 = null,
+    flag_trash_info_dir: ?[:0]const u8 = null,
     flag_version: bool = false,
     flag_silent: bool = false,
     flag_parser: FlagParser = .{
@@ -463,6 +496,27 @@ const Context = struct {
             .reporter = Reporter.init(arena),
         };
         try result.flag_parser.parseProcessArgs(arena);
+        result.trash_paths = util.trash_paths.resolve(arena, .{
+            .cli_trash_dir = result.flag_trash_dir,
+            .cli_trash_info_dir = result.flag_trash_info_dir,
+        }) catch |err| {
+            if (builtin.os.tag == .linux) {
+                switch (err) {
+                    error.InvalidTrashFilesDir => {
+                        try result.reporter.pushError("--trash-dir must include a parent directory", .{});
+                    },
+                    else => return err,
+                }
+            } else {
+                switch (err) {
+                    error.TrashInfoDirUnsupportedOnThisOs => {
+                        try result.reporter.pushError("--trash-info-dir is only supported on linux", .{});
+                    },
+                    else => return err,
+                }
+            }
+            return result;
+        };
         return result;
     }
 
@@ -491,6 +545,8 @@ const Context = struct {
         R,
         @"--fzf-preview",
         @"--fzf-preview-window",
+        @"--trash-dir",
+        @"--trash-info-dir",
         @"--viu",
         @"--viu-width",
     };
@@ -528,6 +584,18 @@ const Context = struct {
                         },
                         .@"--fzf-preview-window" => {
                             self.flag_fzf_preview_window = iter.next();
+                        },
+                        .@"--trash-dir" => {
+                            self.flag_trash_dir = iter.next();
+                            if (self.flag_trash_dir == null) {
+                                try self.reporter.pushError("--trash-dir value missing", .{});
+                            }
+                        },
+                        .@"--trash-info-dir" => {
+                            self.flag_trash_info_dir = iter.next();
+                            if (self.flag_trash_info_dir == null) {
+                                try self.reporter.pushError("--trash-info-dir value missing", .{});
+                            }
                         },
                         .@"--viu" => self.flag_fzf_preview_viu = true,
                         .@"--viu-width" => {

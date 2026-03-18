@@ -37,6 +37,8 @@ USAGE: trash files.. (--flags)
     --fzf-preview-window   Overwrite the --preview-window fzf flag. (see fzf --help)
 
   Other Flags:
+  --trash-dir             Override trash files dir. env: SAFEUTILS_TRASH_DIR
+  --trash-info-dir        Override trash info dir. env: SAFEUTILS_TRASH_INFO_DIR
   -s --silent               Only print errors.
   -v --version              Print version.
   -h --help                 Display this help.

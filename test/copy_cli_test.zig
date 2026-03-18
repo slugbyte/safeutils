@@ -20,6 +20,10 @@ fn runCopy(cwd_dir: fs.Dir, args: []const []const u8) util.CliResult {
     return util.runBinary(getCopyExePath(), cwd_dir, args);
 }
 
+fn runCopyWithEnv(cwd_dir: fs.Dir, args: []const []const u8, env_overrides: []const util.EnvVar) util.CliResult {
+    return util.runBinaryWithEnv(getCopyExePath(), cwd_dir, args, env_overrides);
+}
+
 // ============================================================================
 // Fix #2: --silent suppresses verbose output
 // ============================================================================
@@ -250,6 +254,93 @@ test "copy multiple files into directory" {
     const two = try util.readFile(tmp.dir, "dest/two.txt");
     defer testing.allocator.free(two);
     try testing.expectEqualStrings("2", two);
+}
+
+test "existing directory dest without slash errors in no-clobber mode" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "hello");
+    try tmp.dir.makeDir("dest");
+
+    const result = runCopy(tmp.dir, &.{ "src.txt", "dest" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "use clobber flags or add '/' to copy into dir") != null);
+
+    const src_content = try util.readFile(tmp.dir, "src.txt");
+    defer testing.allocator.free(src_content);
+    try testing.expectEqualStrings("hello", src_content);
+}
+
+test "backup clobber handles dangling backup symlink path" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "new content");
+    try util.writeFile(tmp.dir, "dest.txt", "old content");
+    try tmp.dir.symLink("missing-target.txt", "dest.txt.backup~", .{});
+
+    const result = runCopy(tmp.dir, &.{ "--backup", "src.txt", "dest.txt" });
+    defer result.deinit();
+    try testing.expectEqual(@as(?u8, 0), result.code);
+
+    const dest_content = try util.readFile(tmp.dir, "dest.txt");
+    defer testing.allocator.free(dest_content);
+    try testing.expectEqualStrings("new content", dest_content);
+
+    const backup_content = try util.readFile(tmp.dir, "dest.txt.backup~");
+    defer testing.allocator.free(backup_content);
+    try testing.expectEqualStrings("old content", backup_content);
+}
+
+test "trash clobber moves existing dest into isolated trash dir" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "new content");
+    try util.writeFile(tmp.dir, "dest.txt", "old content");
+    try tmp.dir.makePath("tmp_trash/files");
+    try tmp.dir.makePath("tmp_trash/info");
+
+    const result = runCopyWithEnv(
+        tmp.dir,
+        &.{ "--trash", "src.txt", "dest.txt" },
+        &.{
+            .{ .key = "SAFEUTILS_TRASH_DIR", .value = "tmp_trash/files" },
+            .{ .key = "SAFEUTILS_TRASH_INFO_DIR", .value = "tmp_trash/info" },
+        },
+    );
+    defer result.deinit();
+
+    try testing.expectEqual(@as(?u8, 0), result.code);
+    try testing.expect(util.fileExists(tmp.dir, "src.txt"));
+
+    const dest_content = try util.readFile(tmp.dir, "dest.txt");
+    defer testing.allocator.free(dest_content);
+    try testing.expectEqualStrings("new content", dest_content);
+
+    const trashed = try util.readFile(tmp.dir, "tmp_trash/files/dest.txt");
+    defer testing.allocator.free(trashed);
+    try testing.expectEqualStrings("old content", trashed);
+}
+
+test "copying symlink copies link target path" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "target.txt", "target body");
+    try tmp.dir.symLink("target.txt", "link.txt", .{});
+
+    const result = runCopy(tmp.dir, &.{ "link.txt", "copied_link.txt" });
+    defer result.deinit();
+    try testing.expectEqual(@as(?u8, 0), result.code);
+
+    var link_buffer: [fs.max_path_bytes]u8 = undefined;
+    const link_target = try tmp.dir.readLink("copied_link.txt", &link_buffer);
+    try testing.expectEqualStrings("target.txt", link_target);
 }
 
 test "copy without required flags for dir src fails" {

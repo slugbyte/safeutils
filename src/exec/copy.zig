@@ -110,10 +110,8 @@ fn resolveDestination(ctx: *Context, src_input: [][:0]const u8, dest_input: [:0]
             if (util.endsWith(dest_input, "/")) {
                 should_join_src_to_dest = true;
             } else {
-                if (ctx.flag_clobber_style == .NoClobber) {
-                    if (src_input.len > 1) {
-                        try ctx.reporter.pushError("use clobber flags or add '/' to copy into dir", .{});
-                    }
+                if (ctx.flag_dir_style != .Merge and ctx.flag_clobber_style == .NoClobber) {
+                    try ctx.reporter.pushError("use clobber flags or add '/' to copy into dir", .{});
                 }
             }
         } else {
@@ -310,7 +308,7 @@ pub fn clobber(ctx: *Context, clobber_path: []const u8) !void {
             .Backup => {
                 if (stat.kind != .directory or ctx.flag_dir_style != .Merge) {
                     const backup_path = try util.fmt(ctx.arena, "{s}.backup~", .{clobber_path});
-                    if (try ctx.cwd.stat(backup_path)) |backup_stat| {
+                    if (try ctx.cwd.statNoFollow(backup_path)) |backup_stat| {
                         const trashpath = try ctx.cwd.trash(ctx.arena, backup_path, backup_stat.kind);
                         try ctx.reporter.pushWarning("trashed: $trash/{s}", .{path.basename(trashpath)});
                     }

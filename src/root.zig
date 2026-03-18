@@ -6,6 +6,7 @@ pub const dirpath = @import("./util/dirpath.zig");
 pub const term = @import("./util/term.zig");
 pub const exec = @import("./util/exec.zig");
 pub const trashinfo = @import("./util/trashinfo.zig");
+pub const trash_paths = @import("./util/trash_paths.zig");
 
 pub const ArgIterator = @import("./util/ArgIterator.zig");
 pub const FlagIterator = @import("./util/FlagIterator.zig").FlagIterator;

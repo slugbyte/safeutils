@@ -76,9 +76,10 @@ pub fn main() !void {
         2 => {
             const src_path = ctx.positionals[0];
             var dest_path = ctx.positionals[1];
+            var same_location_dest_path: []const u8 = dest_path;
 
             // CHECK SRC EXISTS
-            if (try ctx.cwd.stat(src_path) == null) {
+            if (try ctx.cwd.statNoFollow(src_path) == null) {
                 try ctx.reporter.pushError("src not found: ({s})", .{src_path});
             }
             if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
@@ -105,6 +106,7 @@ pub fn main() !void {
 
                 if (is_parent) {
                     const real_dest_path = try util.fmt(arena, "{s}{s}", .{ dest_path, basename(src_path) });
+                    same_location_dest_path = real_dest_path;
                     if (try ctx.cwd.statNoFollow(real_dest_path)) |real_dest_stat| {
                         _ = try checkDest(&ctx, real_dest_path, real_dest_stat, true);
                     }
@@ -112,8 +114,8 @@ pub fn main() !void {
             }
 
             // CHECK SAME LOCATION
-            if (try ctx.cwd.isPathSameLocation(src_path, dest_path)) {
-                try ctx.reporter.pushError("src and dest cannot be same location: ({s} == {s})", .{ src_path, dest_path });
+            if (try ctx.cwd.isPathSameLocation(src_path, same_location_dest_path)) {
+                try ctx.reporter.pushError("src and dest cannot be same location: ({s} == {s})", .{ src_path, same_location_dest_path });
             }
 
             if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
@@ -133,7 +135,7 @@ pub fn main() !void {
 
             { // CHECK SRC PATHS EXIST
                 for (src_path_list) |src_path| {
-                    if (try ctx.cwd.stat(src_path) == null) {
+                    if (try ctx.cwd.statNoFollow(src_path) == null) {
                         try ctx.reporter.pushError("src path not found: ({s})", .{src_path});
                     }
                 }
