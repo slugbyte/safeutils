@@ -99,3 +99,18 @@ Usage: move src.. dest (--flags)
     -v --version  Print version
     -h --help     Print this help
 ```
+
+## repo-open
+```
+Usage: repo-open (--flags)
+  Open this repository on the forge remote, or print the URL.
+  Supports github.com, gitlab.com, and codeberg.org remotes.
+
+  -r --remote   remote     remote name (default: origin, fallback first supported)
+  -b --branch   branch     open branch URL
+  -c --commit   commit     open commit URL
+  -p --print               print URL only, do not open browser
+
+  -v --version             print this version
+  -h --help                print this help
+```

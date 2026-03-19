@@ -28,8 +28,9 @@ pub fn make(b: *std.Build.Step, opt: std.Build.Step.MakeOptions) !void {
     const move_help_msg = @import("../exec/move.zig").help_msg;
     const trash_help_msg = @import("../exec/trash.zig").help_msg;
     const copy_help_msg = @import("../exec/copy.zig").help_msg;
+    const repo_open_help_msg = @import("../exec/repo-open.zig").help_msg;
 
-    try writer.interface.print(README_CONTENT, .{ trash_help_msg, copy_help_msg, move_help_msg });
+    try writer.interface.print(README_CONTENT, .{ trash_help_msg, copy_help_msg, move_help_msg, repo_open_help_msg });
     try writer.interface.flush();
 }
 
@@ -62,6 +63,11 @@ const README_CONTENT =
     \\```
     \\
     \\## move (mv replacement)
+    \\```
+    \\{s}
+    \\```
+    \\
+    \\## repo-open
     \\```
     \\{s}
     \\```

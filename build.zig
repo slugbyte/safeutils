@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
         .optimize = config.optimize,
     });
 
-    const exe_names = [_][]const u8{ "copy", "move", "trash" };
+    const exe_names = [_][]const u8{ "copy", "move", "trash", "repo-open" };
     var executables: [exe_names.len]*std.Build.Step.Compile = undefined;
 
     for (exe_names, 0..) |exe_name, i| {
