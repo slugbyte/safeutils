@@ -234,7 +234,7 @@ fn checkConflicts(ctx: *Context, copy_list: []const CopyItem, src_input: [][:0]c
 /// Trash or backup existing destination paths, then create dest dir if needed.
 fn clobberDestinations(ctx: *Context, copy_list: []const CopyItem, dest_input: [:0]const u8) !void {
     for (copy_list) |item| {
-        try clobber(ctx, item.dest);
+        try clobber(ctx, item.dest, item.kind);
     }
 
     if (ctx.flag_create) {
@@ -285,28 +285,26 @@ inline fn copyDir(ctx: *Context, item: CopyItem) !void {
     };
 }
 
-pub fn clobber(ctx: *Context, clobber_path: []const u8) !void {
+pub fn clobber(ctx: *Context, clobber_path: []const u8, src_kind: std.fs.File.Kind) !void {
     if (try ctx.cwd.statNoFollow(clobber_path)) |stat| {
+        // In merge mode, only dir-on-dir conflicts are merged. All other
+        // combinations (file->dir, link->dir, etc.) follow normal clobber rules.
+        const is_merge_dir = ctx.flag_dir_style == .Merge and stat.kind == .directory and src_kind == .directory;
         switch (ctx.flag_clobber_style) {
             .NoClobber => {
-                if (stat.kind == .directory) {
-                    if (ctx.flag_dir_style != .Merge) {
-                        try ctx.reporter.pushError("dest path exists: ({s})", .{clobber_path});
-                        ctx.fail_clobber = true;
-                    }
-                } else {
+                if (!is_merge_dir) {
                     try ctx.reporter.pushError("dest path exists: ({s})", .{clobber_path});
                     ctx.fail_clobber = true;
                 }
             },
             .Trash => {
-                if (stat.kind != .directory or ctx.flag_dir_style != .Merge) {
+                if (!is_merge_dir) {
                     const trashpath = try ctx.cwd.trash(ctx.arena, clobber_path, stat.kind);
                     try ctx.reporter.pushWarning("trashed: $trash/{s}", .{path.basename(trashpath)});
                 }
             },
             .Backup => {
-                if (stat.kind != .directory or ctx.flag_dir_style != .Merge) {
+                if (!is_merge_dir) {
                     const backup_path = try util.fmt(ctx.arena, "{s}.backup~", .{clobber_path});
                     if (try ctx.cwd.statNoFollow(backup_path)) |backup_stat| {
                         const trashpath = try ctx.cwd.trash(ctx.arena, backup_path, backup_stat.kind);

@@ -282,6 +282,30 @@ test "dangling symlink source can be moved" {
     try testing.expectEqualStrings("target.txt", new_link);
 }
 
+test "backup clobber handles broken destination symlink" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "new content");
+    // Create a broken symlink at dest.txt.
+    try tmp.dir.symLink("nonexistent_target", "dest.txt", .{});
+
+    const result = runMove(tmp.dir, &.{ "--backup", "src.txt", "dest.txt" });
+    defer result.deinit();
+    try testing.expectEqual(@as(?u8, 0), result.code);
+
+    // src should be gone, dest should have new content.
+    try testing.expect(!util.fileExists(tmp.dir, "src.txt"));
+    const content = try util.readFile(tmp.dir, "dest.txt");
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("new content", content);
+
+    // The broken symlink should have been backed up.
+    var link_buffer: [fs.max_path_bytes]u8 = undefined;
+    const backup_link = try tmp.dir.readLink("dest.txt.backup~", &link_buffer);
+    try testing.expectEqualStrings("nonexistent_target", backup_link);
+}
+
 test "trash clobber moves existing dest into isolated trash dir" {
     if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
 
@@ -418,6 +442,66 @@ test "no args prints usage and exits with error" {
     defer result.deinit();
     try testing.expect(result.code != null and result.code.? != 0);
     try testing.expect(std.mem.indexOf(u8, result.stderr, "USAGE: move") != null);
+}
+
+// ============================================================================
+// move directory
+// ============================================================================
+// ============================================================================
+// multi-source bare directory dest (no trailing /) must be rejected
+// ============================================================================
+test "multi-source bare directory dest without trailing slash fails" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "a.txt", "aaa");
+    try util.writeFile(tmp.dir, "b.txt", "bbb");
+    try tmp.dir.makeDir("out");
+
+    const result = runMove(tmp.dir, &.{ "a.txt", "b.txt", "out" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "trailing '/'") != null);
+
+    // No files should have been moved.
+    try testing.expect(util.fileExists(tmp.dir, "a.txt"));
+    try testing.expect(util.fileExists(tmp.dir, "b.txt"));
+}
+
+test "multi-source bare directory dest with clobber flag still fails" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "a.txt", "aaa");
+    try util.writeFile(tmp.dir, "b.txt", "bbb");
+    try tmp.dir.makeDir("out");
+
+    const result = runMove(tmp.dir, &.{ "--backup", "a.txt", "b.txt", "out" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "trailing '/'") != null);
+
+    // No files should have been moved.
+    try testing.expect(util.fileExists(tmp.dir, "a.txt"));
+    try testing.expect(util.fileExists(tmp.dir, "b.txt"));
+}
+
+test "multi-source non-directory dest fails" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "a.txt", "aaa");
+    try util.writeFile(tmp.dir, "b.txt", "bbb");
+    try util.writeFile(tmp.dir, "dest.txt", "existing");
+
+    const result = runMove(tmp.dir, &.{ "a.txt", "b.txt", "dest.txt" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "must be a directory") != null);
+
+    // No files should have been moved.
+    try testing.expect(util.fileExists(tmp.dir, "a.txt"));
+    try testing.expect(util.fileExists(tmp.dir, "b.txt"));
 }
 
 // ============================================================================

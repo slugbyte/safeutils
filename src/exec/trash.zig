@@ -160,11 +160,8 @@ pub const RevertInfo = struct {
 
         const link_buffer = try ctx.arena.alloc(u8, std.fs.max_path_bytes);
         const trash_link = ctx.cwd.dir.readLink(trash_path, link_buffer) catch null;
-        var trash_stat = try ctx.cwd.stat(trash_path);
-        if (trash_link != null) {
-            trash_stat.?.kind = .sym_link;
-        }
-        const trashinfo_stat = try ctx.cwd.stat(trashinfo_path);
+        const trash_stat = try ctx.cwd.statNoFollow(trash_path);
+        const trashinfo_stat = try ctx.cwd.statNoFollow(trashinfo_path);
 
         if (trash_stat == null) {
             try ctx.reporter.pushError("could not find trash file: {s}", .{trash_path});
@@ -312,6 +309,10 @@ pub fn revertTrash(ctx: *Context, trash_name: []const u8) !void {
         ctx.reporter.EXIT_WITH_REPORT(1);
     } else {
         const revert_info = try RevertInfo.init(ctx, trash_name);
+        if (try ctx.cwd.statNoFollow(revert_info.revert_path) != null) {
+            try ctx.reporter.pushError("revert dest already exists: ({s})", .{revert_info.revert_path});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        }
         try ctx.cwd.move(revert_info.trash_path, revert_info.revert_path);
         try ctx.cwd.dir.deleteFile(revert_info.trashinfo_path);
         util.log("restored: {s}", .{revert_info.revert_path});
@@ -326,10 +327,14 @@ pub fn fetchTrash(ctx: *Context, trash_name: []const u8) !void {
         ctx.reporter.EXIT_WITH_REPORT(1);
     } else {
         const revert_info = try RevertInfo.init(ctx, trash_name);
-        const basename = std.fs.path.basename(revert_info.revert_path);
-        try ctx.cwd.move(revert_info.trash_path, basename);
+        const fetch_basename = std.fs.path.basename(revert_info.revert_path);
+        if (try ctx.cwd.statNoFollow(fetch_basename) != null) {
+            try ctx.reporter.pushError("fetch dest already exists: (./{s})", .{fetch_basename});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        }
+        try ctx.cwd.move(revert_info.trash_path, fetch_basename);
         try ctx.cwd.dir.deleteFile(revert_info.trashinfo_path);
-        util.log("fetched: ./{s}", .{basename});
+        util.log("fetched: ./{s}", .{fetch_basename});
         return;
     }
 }
@@ -496,6 +501,18 @@ const Context = struct {
             .reporter = Reporter.init(arena),
         };
         try result.flag_parser.parseProcessArgs(arena);
+
+        // Mode flags are mutually exclusive.
+        var mode_count: u8 = 0;
+        if (result.flag_revert != null) mode_count += 1;
+        if (result.flag_fetch != null) mode_count += 1;
+        if (result.flag_revert_fzf) mode_count += 1;
+        if (result.flag_fetch_fzf) mode_count += 1;
+        if (result.flag_fzf_preview != null) mode_count += 1;
+        if (mode_count > 1) {
+            try result.reporter.pushError("--revert, --fetch, --revert-fzf, --fetch-fzf, and --fzf-preview are mutually exclusive", .{});
+        }
+
         result.trash_paths = util.trash_paths.resolve(arena, .{
             .cli_trash_dir = result.flag_trash_dir,
             .cli_trash_info_dir = result.flag_trash_info_dir,
@@ -584,6 +601,9 @@ const Context = struct {
                         },
                         .@"--fzf-preview-window" => {
                             self.flag_fzf_preview_window = iter.next();
+                            if (self.flag_fzf_preview_window == null) {
+                                try self.reporter.pushError("--fzf-preview-window value missing", .{});
+                            }
                         },
                         .@"--trash-dir" => {
                             self.flag_trash_dir = iter.next();
@@ -599,7 +619,10 @@ const Context = struct {
                         },
                         .@"--viu" => self.flag_fzf_preview_viu = true,
                         .@"--viu-width" => {
-                            self.flag_fzf_preview_viu_width = iter.nextInt(usize, 10) catch null;
+                            self.flag_fzf_preview_viu_width = iter.nextInt(usize, 10) catch {
+                                try self.reporter.pushError("--viu-width requires a valid number", .{});
+                                break;
+                            };
                         },
                     }
                 },

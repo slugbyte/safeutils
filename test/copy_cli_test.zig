@@ -357,6 +357,63 @@ test "copy without required flags for dir src fails" {
     try testing.expect(std.mem.indexOf(u8, result.stderr, "copy dir requires --dir or --merge") != null);
 }
 
+// ============================================================================
+// --merge conflict handling: file->dir is not silently merged
+// ============================================================================
+test "merge mode file onto existing dir errors without clobber" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Source: srcdir/conflict is a regular file.
+    try tmp.dir.makeDir("srcdir");
+    try util.writeFile(tmp.dir, "srcdir/conflict", "I am a file");
+
+    // Destination already has destdir/srcdir/conflict as a directory.
+    // This creates a file-on-dir conflict at the merge destination.
+    try tmp.dir.makePath("destdir/srcdir/conflict");
+    try util.writeFile(tmp.dir, "destdir/srcdir/conflict/keep.txt", "keep me");
+
+    const result = runCopy(tmp.dir, &.{ "-m", "srcdir", "destdir/" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "dest path exists") != null);
+
+    // The existing directory should be untouched.
+    const kept = try util.readFile(tmp.dir, "destdir/srcdir/conflict/keep.txt");
+    defer testing.allocator.free(kept);
+    try testing.expectEqualStrings("keep me", kept);
+}
+
+test "merge mode dir-on-dir preserves destination directory" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Source: srcdir/sub/new.txt
+    try tmp.dir.makeDir("srcdir");
+    try tmp.dir.makeDir("srcdir/sub");
+    try util.writeFile(tmp.dir, "srcdir/sub/new.txt", "new");
+
+    // Destination already has destdir/srcdir/sub/old.txt.
+    // The dir-on-dir merge should preserve destdir/srcdir/sub/ and add new.txt.
+    try tmp.dir.makePath("destdir/srcdir/sub");
+    try util.writeFile(tmp.dir, "destdir/srcdir/sub/old.txt", "old");
+
+    const result = runCopy(tmp.dir, &.{ "-m", "srcdir", "destdir/" });
+    defer result.deinit();
+    try testing.expectEqual(@as(?u8, 0), result.code);
+
+    // Both files should coexist in the merged directory.
+    const old = try util.readFile(tmp.dir, "destdir/srcdir/sub/old.txt");
+    defer testing.allocator.free(old);
+    try testing.expectEqualStrings("old", old);
+
+    const new = try util.readFile(tmp.dir, "destdir/srcdir/sub/new.txt");
+    defer testing.allocator.free(new);
+    try testing.expectEqualStrings("new", new);
+}
+
 test "copy src not found error" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

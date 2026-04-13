@@ -145,11 +145,15 @@ pub fn main() !void {
                 }
             }
 
-            { // CHECK DEST IS A VALID DIRECTORY
+            { // CHECK DEST IS A VALID DIRECTORY WITH TRAILING SLASH
                 if (try ctx.cwd.statNoFollow(dest_path)) |dest_stat| {
-                    _ = try checkDest(&ctx, dest_path, dest_stat, false);
+                    if (dest_stat.kind != .directory) {
+                        try ctx.reporter.pushError("multi-source dest must be a directory: ({s})", .{dest_path});
+                    } else if (!util.endsWith(dest_path, "/")) {
+                        try ctx.reporter.pushError("multi-source dest must have a trailing '/': ({s})", .{dest_path});
+                    }
                 } else {
-                    try ctx.reporter.pushError("dest must be a directory.", .{});
+                    try ctx.reporter.pushError("dest not found: ({s})", .{dest_path});
                 }
                 if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
                     try ctx.reporter.pushError("moved 0/{d} files", .{src_path_list.len});
@@ -249,19 +253,17 @@ pub fn move(ctx: *Context, src_path: [:0]const u8, dest_path: [:0]const u8) !voi
         into_dir = true;
     }
 
-    if (try ctx.cwd.exists(real_dest_path)) {
+    if (try ctx.cwd.statNoFollow(real_dest_path)) |dest_stat| {
         switch (ctx.flag_clobber_style) {
             .NoClobber => ctx.reporter.PANIC_WITH_REPORT("NoClobber should be unreachable", .{}),
             .Trash => {
-                const stat = (try ctx.cwd.statNoFollow(real_dest_path)).?;
-                const trash_path = try ctx.cwd.trash(ctx.arena, real_dest_path, stat.kind);
+                const trash_path = try ctx.cwd.trash(ctx.arena, real_dest_path, dest_stat.kind);
                 if (!ctx.flag_silent) try ctx.reporter.pushWarning("trashed: {s} > $trash/{s}", .{ real_dest_path, basename(trash_path) });
             },
             .Backup => {
                 const path_destinaton_backup = try util.fmtZ(ctx.arena, "{s}.backup~", .{real_dest_path});
-                if (try ctx.cwd.exists(path_destinaton_backup)) {
-                    const stat = (try ctx.cwd.statNoFollow(path_destinaton_backup)).?;
-                    const trash_path = try ctx.cwd.trash(ctx.arena, path_destinaton_backup, stat.kind);
+                if (try ctx.cwd.statNoFollow(path_destinaton_backup)) |backup_stat| {
+                    const trash_path = try ctx.cwd.trash(ctx.arena, path_destinaton_backup, backup_stat.kind);
                     if (!ctx.flag_silent) try ctx.reporter.pushWarning("trashed: {s} > $trash/{s}", .{ path_destinaton_backup, basename(trash_path) });
                 }
                 try ctx.cwd.move(real_dest_path, path_destinaton_backup);

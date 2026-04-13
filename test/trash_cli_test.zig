@@ -436,6 +436,83 @@ test "TEST: fetch restores file into cwd and removes trashinfo" {
     try testing.expect(!util.fileExists(tmp.dir, ".xdg-data/Trash/info/fetchme.txt.trashinfo"));
 }
 
+test "TEST: revert restores broken symlink" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Create a broken symlink and trash it.
+    try tmp.dir.symLink("nonexistent_target", "broken.link", .{});
+
+    const trash_result = runTrash(tmp.dir, &.{"broken.link"});
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+    try testing.expect(!util.fileExists(tmp.dir, "broken.link"));
+
+    // Revert should succeed even though the symlink target does not exist.
+    const revert_result = runTrash(tmp.dir, &.{ "--revert", "broken.link" });
+    defer revert_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), revert_result.code);
+
+    // The symlink should be restored and still point at the original target.
+    var link_buffer: [fs.max_path_bytes]u8 = undefined;
+    const link_target = try tmp.dir.readLink("broken.link", &link_buffer);
+    try testing.expectEqualStrings("nonexistent_target", link_target);
+}
+
+test "TEST: revert fails when dest already exists" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "conflict.txt", "original");
+
+    const trash_result = runTrash(tmp.dir, &.{"conflict.txt"});
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+
+    // Recreate the file at the original location.
+    try util.writeFile(tmp.dir, "conflict.txt", "replacement");
+
+    const revert_result = runTrash(tmp.dir, &.{ "--revert", "conflict.txt" });
+    defer revert_result.deinit();
+    try testing.expect(revert_result.code != null and revert_result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, revert_result.stderr, "revert dest already exists") != null);
+
+    // The replacement file should be untouched.
+    const content = try util.readFile(tmp.dir, "conflict.txt");
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("replacement", content);
+}
+
+test "TEST: fetch fails when dest already exists in cwd" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "dup.txt", "original");
+
+    const trash_result = runTrash(tmp.dir, &.{"dup.txt"});
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+
+    // Create a file with the same name in cwd.
+    try util.writeFile(tmp.dir, "dup.txt", "blocker");
+
+    const fetch_result = runTrash(tmp.dir, &.{ "--fetch", "dup.txt" });
+    defer fetch_result.deinit();
+    try testing.expect(fetch_result.code != null and fetch_result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, fetch_result.stderr, "fetch dest already exists") != null);
+
+    // The blocking file should be untouched.
+    const content = try util.readFile(tmp.dir, "dup.txt");
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("blocker", content);
+}
+
 test "TEST: revert errors when trashinfo is missing" {
     if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
 
@@ -482,6 +559,41 @@ test "TEST: revert errors when trash file is missing" {
 
     try testing.expect(result.code != null and result.code.? != 0);
     try testing.expect(std.mem.indexOf(u8, result.stderr, "could not find trash file") != null);
+}
+
+// ============================================================================
+// Flag validation
+// ============================================================================
+test "TEST: mutually exclusive mode flags produce error" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const result = runTrash(tmp.dir, &.{ "--revert", "a.txt", "--fetch", "b.txt" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "mutually exclusive") != null);
+}
+
+test "TEST: --viu-width rejects non-numeric input" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const result = runTrash(tmp.dir, &.{ "--viu-width", "abc" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "--viu-width requires a valid number") != null);
+}
+
+test "TEST: --fzf-preview-window rejects missing value" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const result = runTrash(tmp.dir, &.{"--fzf-preview-window"});
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "--fzf-preview-window value missing") != null);
 }
 
 test "TEST: fetch fzf oversized output returns clear error" {
