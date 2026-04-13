@@ -72,12 +72,13 @@ pub fn main() !void {
     }
 
     if (ctx.flag_help) {
-        util.log("{s}\n\n  Version:\n   {s} {s} {s} ({s})", .{
+        util.log("{s}\n\n  Version:\n    {s} {s} {s} ({s}) '{s}'", .{
             help_msg,
             build_option.version,
             build_option.change_id[0..8],
             build_option.commit_id[0..8],
             build_option.date,
+            build_option.description,
         });
         ctx.reporter.EXIT_WITH_REPORT(0);
     }

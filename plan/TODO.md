@@ -4,7 +4,6 @@
 
 * Support `--` end-of-flags separator to allow filenames starting with `-`
 
-* `build -Djj_ref='@-'` so you can choose jj ref build time (build/commit/desc)
 * trash `--cleanup` 
   * remove borked `.trashinfo` files
   * make a `lost_home` dir for files with no `.trashinfo` files

@@ -35,15 +35,18 @@ pub fn init(b: *std.Build) BuildConfig {
         "change_id",
     }).stdout orelse "no_git_hash";
 
-    const description = build_pkg.run(b, .Pipe, .Ignore, &.{
-        "jj",
-        "log",
-        "--no-graph",
-        "-r",
-        "@",
-        "-T",
-        "description.first_line()",
-    }).stdout orelse "no desc";
+    const maybe_description = b.option(
+        []const u8,
+        "desc",
+        "Short feature description for the build (required for release).",
+    );
+
+    const is_release = optimize != .Debug;
+    if (is_release and maybe_description == null) {
+        @panic("release builds require -Ddesc=\"...\"");
+    }
+
+    const description = maybe_description orelse "dev";
 
     // TODO: make my own date formatter
     const date = build_pkg.run(b, .Pipe, .Ignore, &.{
