@@ -55,13 +55,15 @@ USAGE: trash files.. (--flags)
 ```
 Usage: copy src.. dest (--flags)
   Copy a files and a directories.
-  
+
+  -u --undo            undo the most recent copy operation
+
   -d --dir             dirs copy recursively, and clobber conflicts
   -m --merge           dirs copy recursively, but src_dirs dont clobber dest_dirs
   -t --trash           trash conflicting files
   -c --create          create dest dir if not exists
   -b --backup          backup conflicting files
- 
+
   -s --silent          only print errors
   -v --version         print this version
   -h --help            print this help
@@ -83,6 +85,9 @@ Usage: move src.. dest (--flags)
   When moving multiple files last path must be a directory and have a '/' at the end.
 
   Move will not partially move src.. paths. Everything must move or nothing will move.
+
+  Undo:
+    -u --undo     Undo the most recent move operation.
 
   Clobber Style:
     (default)     Print error and exit

@@ -11,6 +11,19 @@ const ArgIterator = util.ArgIterator;
 const FlagParser = util.FlagParser;
 const Reporter = util.Reporter;
 const WorkDir = util.WorkDir;
+const ClobberInfo = util.clobber_undo.ClobberInfo;
+
+const MoveUndoData = struct {
+    src_path: []const u8,
+    dest_path: []const u8,
+    clobber_trash_path: []const u8,
+    clobber_trashinfo_path: []const u8,
+    clobber_backup_path: []const u8,
+    clobber_backup_trash_path: []const u8,
+    clobber_backup_trashinfo_path: []const u8,
+};
+
+const MoveUndoLog = util.UndoLog.UndoLog(MoveUndoData);
 
 pub const help_msg =
     \\Usage: move src.. dest (--flags)
@@ -19,6 +32,9 @@ pub const help_msg =
     \\  When moving multiple files last path must be a directory and have a '/' at the end.
     \\
     \\  Move will not partially move src.. paths. Everything must move or nothing will move.
+    \\
+    \\  Undo:
+    \\    -u --undo     Undo the most recent move operation.
     \\
     \\  Clobber Style:
     \\    (default)     Print error and exit
@@ -66,6 +82,10 @@ pub fn main() !void {
             build_option.description,
         });
         ctx.reporter.EXIT_WITH_REPORT(0);
+    }
+
+    if (ctx.flag_undo) {
+        return undoMove(&ctx);
     }
 
     switch (ctx.positionals.len) {
@@ -122,7 +142,8 @@ pub fn main() !void {
                 return ctx.reporter.EXIT_WITH_REPORT(1);
             }
 
-            try move(&ctx, src_path, dest_path);
+            const undo_data = try move(&ctx, src_path, dest_path);
+            persistUndoLog(ctx.arena, &.{undo_data});
         },
         else => {
             const src_path_list = ctx.positionals[0 .. ctx.positionals.len - 1];
@@ -178,9 +199,12 @@ pub fn main() !void {
                 }
             }
             // GO FOR IT
+            var undo_list = std.ArrayList(MoveUndoData).empty;
             for (ctx.positionals[0 .. ctx.positionals.len - 1]) |src_path| {
-                try move(&ctx, src_path, dest_path);
+                const undo_data = try move(&ctx, src_path, dest_path);
+                try undo_list.append(arena, undo_data);
             }
+            persistUndoLog(ctx.arena, undo_list.items);
             if (!ctx.flag_silent) util.log("moved {d}/{d} files", .{ src_path_list.len, src_path_list.len });
         },
     }
@@ -241,29 +265,44 @@ pub fn checkDest(
     return false;
 }
 
-/// asserts that everything has been prevalidated.. src must be able to move to dest or it will panic
-pub fn move(ctx: *Context, src_path: [:0]const u8, dest_path: [:0]const u8) !void {
+/// Asserts that everything has been prevalidated. Returns undo metadata.
+pub fn move(ctx: *Context, src_path: [:0]const u8, dest_path: [:0]const u8) !MoveUndoData {
     var rename_buffer: [std.fs.max_path_bytes]u8 = undefined;
     var real_dest_path = dest_path;
-    var into_dir = false;
 
     if (std.mem.endsWith(u8, real_dest_path, "/")) {
         const file_name = std.fs.path.basename(src_path);
         real_dest_path = try std.fmt.bufPrintZ(&rename_buffer, "{s}{s}", .{ real_dest_path, file_name });
-        into_dir = true;
     }
+
+    const abs_src = try ctx.cwd.realpathZ(ctx.arena, src_path);
+    const abs_dest = try ctx.cwd.realpathZ(ctx.arena, real_dest_path);
+    var undo = MoveUndoData{
+        .src_path = abs_src,
+        .dest_path = abs_dest,
+        .clobber_trash_path = "",
+        .clobber_trashinfo_path = "",
+        .clobber_backup_path = "",
+        .clobber_backup_trash_path = "",
+        .clobber_backup_trashinfo_path = "",
+    };
 
     if (try ctx.cwd.statNoFollow(real_dest_path)) |dest_stat| {
         switch (ctx.flag_clobber_style) {
             .NoClobber => ctx.reporter.PANIC_WITH_REPORT("NoClobber should be unreachable", .{}),
             .Trash => {
                 const trash_path = try ctx.cwd.trash(ctx.arena, real_dest_path, dest_stat.kind);
+                undo.clobber_trash_path = try ctx.cwd.realpathZ(ctx.arena, trash_path);
+                undo.clobber_trashinfo_path = try util.clobber_undo.trashinfoPathFor(ctx.arena, ctx.cwd, trash_path);
                 if (!ctx.flag_silent) try ctx.reporter.pushWarning("trashed: {s} > $trash/{s}", .{ real_dest_path, basename(trash_path) });
             },
             .Backup => {
                 const path_destinaton_backup = try util.fmtZ(ctx.arena, "{s}.backup~", .{real_dest_path});
+                undo.clobber_backup_path = try ctx.cwd.realpathZ(ctx.arena, path_destinaton_backup);
                 if (try ctx.cwd.statNoFollow(path_destinaton_backup)) |backup_stat| {
                     const trash_path = try ctx.cwd.trash(ctx.arena, path_destinaton_backup, backup_stat.kind);
+                    undo.clobber_backup_trash_path = try ctx.cwd.realpathZ(ctx.arena, trash_path);
+                    undo.clobber_backup_trashinfo_path = try util.clobber_undo.trashinfoPathFor(ctx.arena, ctx.cwd, trash_path);
                     if (!ctx.flag_silent) try ctx.reporter.pushWarning("trashed: {s} > $trash/{s}", .{ path_destinaton_backup, basename(trash_path) });
                 }
                 try ctx.cwd.move(real_dest_path, path_destinaton_backup);
@@ -274,6 +313,76 @@ pub fn move(ctx: *Context, src_path: [:0]const u8, dest_path: [:0]const u8) !voi
     try ctx.cwd.move(src_path, real_dest_path);
     if (!ctx.flag_silent) {
         util.log("{s} > {s}", .{ src_path, real_dest_path });
+    }
+    return undo;
+}
+
+fn persistUndoLog(allocator: Allocator, undo_files: []const MoveUndoData) void {
+    const log_path = util.UndoLog.logPath(allocator, "move-undo.zon") catch return;
+    MoveUndoLog.appendAndSave(allocator, log_path, undo_files) catch {};
+}
+
+pub fn undoMove(ctx: *Context) !void {
+    const log_path = try util.UndoLog.logPath(ctx.arena, "move-undo.zon");
+    const entry = MoveUndoLog.popLatestAndSave(ctx.arena, log_path) catch |err| switch (err) {
+        error.UndoLogCorrupt => {
+            try ctx.reporter.pushError("undo log is corrupt, delete {s} to reset", .{log_path});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        },
+        else => return err,
+    };
+    if (entry == null) {
+        util.log("nothing to undo", .{});
+        return;
+    }
+    const files = entry.?.files;
+
+    // Pre-flight: validate every restore target before moving anything.
+    var preflight_ok = true;
+    for (files) |file| {
+        if (try ctx.cwd.statNoFollow(file.dest_path) == null) {
+            try ctx.reporter.pushError("undo failed: dest file missing: {s}", .{file.dest_path});
+            preflight_ok = false;
+        }
+        if (try ctx.cwd.statNoFollow(file.src_path) != null) {
+            try ctx.reporter.pushError("undo failed: original location occupied: {s}", .{file.src_path});
+            preflight_ok = false;
+        }
+        const clobber = ClobberInfo{
+            .clobber_trash_path = file.clobber_trash_path,
+            .clobber_trashinfo_path = file.clobber_trashinfo_path,
+            .clobber_backup_path = file.clobber_backup_path,
+            .clobber_backup_trash_path = file.clobber_backup_trash_path,
+            .clobber_backup_trashinfo_path = file.clobber_backup_trashinfo_path,
+        };
+        if (try util.clobber_undo.preflight(ctx.cwd, clobber)) |missing| {
+            try ctx.reporter.pushError("undo failed: clobber path missing: {s}", .{missing});
+            preflight_ok = false;
+        }
+        if (dirname(file.src_path)) |parent| {
+            const parent_stat = try ctx.cwd.statNoFollow(parent);
+            if (parent_stat == null or parent_stat.?.kind != .directory) {
+                try ctx.reporter.pushError("undo failed: parent directory missing: {s}", .{parent});
+                preflight_ok = false;
+            }
+        }
+    }
+    if (!preflight_ok) {
+        ctx.reporter.EXIT_WITH_REPORT(1);
+    }
+
+    // Execute: move dest back to src, then reverse clobber.
+    for (files) |file| {
+        try ctx.cwd.move(file.dest_path, file.src_path);
+        const clobber = ClobberInfo{
+            .clobber_trash_path = file.clobber_trash_path,
+            .clobber_trashinfo_path = file.clobber_trashinfo_path,
+            .clobber_backup_path = file.clobber_backup_path,
+            .clobber_backup_trash_path = file.clobber_backup_trash_path,
+            .clobber_backup_trashinfo_path = file.clobber_backup_trashinfo_path,
+        };
+        try util.clobber_undo.execute(ctx.cwd, file.dest_path, clobber);
+        if (!ctx.flag_silent) util.log("restored: {s}", .{file.src_path});
     }
 }
 
@@ -286,6 +395,7 @@ const Context = struct {
     positionals: [][:0]const u8 = undefined,
     flag_help: bool = false,
     flag_version: bool = false,
+    flag_undo: bool = false,
     flag_rename: bool = false,
     flag_silent: bool = false,
     flag_clobber_style: util.ClobberStyle = .NoClobber,
@@ -321,6 +431,8 @@ const Context = struct {
         h,
         @"--version",
         v,
+        @"--undo",
+        u,
         @"--trash",
         t,
         @"--backup",
@@ -339,6 +451,7 @@ const Context = struct {
                 .Flag => |flag| switch (flag) {
                     .h, .@"--help" => self.flag_help = true,
                     .v, .@"--version" => self.flag_version = true,
+                    .u, .@"--undo" => self.flag_undo = true,
                     .s, .@"--silent" => self.flag_silent = true,
                     .r, .@"--rename" => self.flag_rename = true,
                     .t, .@"--trash" => self.flag_clobber_style.prioritySet(.Trash),

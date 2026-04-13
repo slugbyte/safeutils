@@ -8,6 +8,26 @@ const Allocator = std.mem.Allocator;
 const FlagParser = util.FlagParser;
 const FlagIterator = util.FlagIterator;
 const ArgIterator = util.ArgIterator;
+const ClobberInfo = util.clobber_undo.ClobberInfo;
+
+const CopyUndoKind = enum {
+    file,
+    directory,
+    sym_link,
+};
+
+const CopyUndoData = struct {
+    dest_path: []const u8,
+    kind: CopyUndoKind,
+    dir_created: bool,
+    clobber_trash_path: []const u8,
+    clobber_trashinfo_path: []const u8,
+    clobber_backup_path: []const u8,
+    clobber_backup_trash_path: []const u8,
+    clobber_backup_trashinfo_path: []const u8,
+};
+
+const CopyUndoLog = util.UndoLog.UndoLog(CopyUndoData);
 
 // VALIDATE SRC INPUT
 // VALIDATE DEST
@@ -17,13 +37,15 @@ const ArgIterator = util.ArgIterator;
 pub const help_msg =
     \\Usage: copy src.. dest (--flags)
     \\  Copy a files and a directories.
-    \\  
+    \\
+    \\  -u --undo            undo the most recent copy operation
+    \\
     \\  -d --dir             dirs copy recursively, and clobber conflicts
     \\  -m --merge           dirs copy recursively, but src_dirs dont clobber dest_dirs
     \\  -t --trash           trash conflicting files
     \\  -c --create          create dest dir if not exists
     \\  -b --backup          backup conflicting files
-    \\ 
+    \\
     \\  -s --silent          only print errors
     \\  -v --version         print this version
     \\  -h --help            print this help
@@ -60,6 +82,10 @@ pub fn main() !void {
         ctx.reporter.EXIT_WITH_REPORT(0);
     }
 
+    if (ctx.flag_undo) {
+        return undoCopy(&ctx);
+    }
+
     if (ctx.positionals.len <= 1) {
         logUsage();
         return;
@@ -79,7 +105,7 @@ pub fn main() !void {
         ctx.reporter.EXIT_WITH_REPORT(1);
     }
 
-    try clobberDestinations(&ctx, copy_list, dest_input);
+    const clobber_results = try clobberDestinations(&ctx, copy_list, dest_input);
     if (ctx.reporter.isError()) {
         ctx.reporter.report();
         if (ctx.fail_clobber) {
@@ -88,7 +114,11 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
-    try performCopies(&ctx, copy_list);
+    const dir_created_list = try performCopies(&ctx, copy_list);
+
+    // Persist undo log on success.
+    persistUndoLog(&ctx, copy_list, clobber_results, dir_created_list);
+
     ctx.reporter.EXIT_WITH_REPORT(0);
 }
 
@@ -232,27 +262,39 @@ fn checkConflicts(ctx: *Context, copy_list: []const CopyItem, src_input: [][:0]c
 }
 
 /// Trash or backup existing destination paths, then create dest dir if needed.
-fn clobberDestinations(ctx: *Context, copy_list: []const CopyItem, dest_input: [:0]const u8) !void {
+/// Returns per-item clobber metadata for undo recording.
+fn clobberDestinations(ctx: *Context, copy_list: []const CopyItem, dest_input: [:0]const u8) ![]ClobberInfo {
+    var results = try std.ArrayList(ClobberInfo).initCapacity(ctx.arena, copy_list.len);
     for (copy_list) |item| {
-        try clobber(ctx, item.dest, item.kind);
+        try results.append(ctx.arena, try clobber(ctx, item.dest, item.kind));
     }
 
     if (ctx.flag_create) {
         ctx.cwd.dir.makePath(dest_input) catch {};
     }
+    return results.items;
 }
 
 /// Perform all file, directory, and symlink copy operations.
-fn performCopies(ctx: *Context, copy_list: []const CopyItem) !void {
-    for (copy_list) |item| {
+/// Returns a per-item boolean indicating whether each directory was created
+/// (true) or pre-existed (false). Non-directory items are always false.
+fn performCopies(ctx: *Context, copy_list: []const CopyItem) ![]bool {
+    var dir_created_list = try ctx.arena.alloc(bool, copy_list.len);
+    for (copy_list, 0..) |item, i| {
         if (!ctx.flag_silent) util.log("{s} -> {s}", .{ item.src, item.dest });
+        dir_created_list[i] = false;
         switch (item.kind) {
             .file => try copyFile(ctx, item),
-            .directory => try copyDir(ctx, item),
+            .directory => {
+                const existed = try ctx.cwd.exists(item.dest);
+                try copyDir(ctx, item);
+                dir_created_list[i] = !existed;
+            },
             .sym_link => try copySymLink(ctx, item),
             else => unreachable,
         }
     }
+    return dir_created_list;
 }
 
 const CopyItem = struct {
@@ -285,7 +327,8 @@ inline fn copyDir(ctx: *Context, item: CopyItem) !void {
     };
 }
 
-pub fn clobber(ctx: *Context, clobber_path: []const u8, src_kind: std.fs.File.Kind) !void {
+pub fn clobber(ctx: *Context, clobber_path: []const u8, src_kind: std.fs.File.Kind) !ClobberInfo {
+    var result = ClobberInfo{};
     if (try ctx.cwd.statNoFollow(clobber_path)) |stat| {
         // In merge mode, only dir-on-dir conflicts are merged. All other
         // combinations (file->dir, link->dir, etc.) follow normal clobber rules.
@@ -300,14 +343,19 @@ pub fn clobber(ctx: *Context, clobber_path: []const u8, src_kind: std.fs.File.Ki
             .Trash => {
                 if (!is_merge_dir) {
                     const trashpath = try ctx.cwd.trash(ctx.arena, clobber_path, stat.kind);
+                    result.clobber_trash_path = try ctx.cwd.realpathZ(ctx.arena, trashpath);
+                    result.clobber_trashinfo_path = try util.clobber_undo.trashinfoPathFor(ctx.arena, ctx.cwd, trashpath);
                     try ctx.reporter.pushWarning("trashed: $trash/{s}", .{path.basename(trashpath)});
                 }
             },
             .Backup => {
                 if (!is_merge_dir) {
                     const backup_path = try util.fmt(ctx.arena, "{s}.backup~", .{clobber_path});
+                    result.clobber_backup_path = try ctx.cwd.realpathZ(ctx.arena, backup_path);
                     if (try ctx.cwd.statNoFollow(backup_path)) |backup_stat| {
                         const trashpath = try ctx.cwd.trash(ctx.arena, backup_path, backup_stat.kind);
+                        result.clobber_backup_trash_path = try ctx.cwd.realpathZ(ctx.arena, trashpath);
+                        result.clobber_backup_trashinfo_path = try util.clobber_undo.trashinfoPathFor(ctx.arena, ctx.cwd, trashpath);
                         try ctx.reporter.pushWarning("trashed: $trash/{s}", .{path.basename(trashpath)});
                     }
                     try ctx.cwd.move(clobber_path, backup_path);
@@ -316,6 +364,120 @@ pub fn clobber(ctx: *Context, clobber_path: []const u8, src_kind: std.fs.File.Ki
             },
         }
     }
+    return result;
+}
+
+fn toCopyUndoKind(kind: std.fs.File.Kind) CopyUndoKind {
+    return switch (kind) {
+        .file => .file,
+        .directory => .directory,
+        .sym_link => .sym_link,
+        else => unreachable,
+    };
+}
+
+fn persistUndoLog(ctx: *Context, copy_list: []const CopyItem, clobber_results: []const ClobberInfo, dir_created_list: []const bool) void {
+    util.assert(copy_list.len == clobber_results.len);
+    util.assert(copy_list.len == dir_created_list.len);
+    var undo_list = std.ArrayList(CopyUndoData).initCapacity(ctx.arena, copy_list.len) catch return;
+    for (copy_list, 0..) |item, i| {
+        const abs_dest = ctx.cwd.realpathZ(ctx.arena, item.dest) catch return;
+        const cr = clobber_results[i];
+        undo_list.append(ctx.arena, .{
+            .dest_path = abs_dest,
+            .kind = toCopyUndoKind(item.kind),
+            .dir_created = dir_created_list[i],
+            .clobber_trash_path = cr.clobber_trash_path,
+            .clobber_trashinfo_path = cr.clobber_trashinfo_path,
+            .clobber_backup_path = cr.clobber_backup_path,
+            .clobber_backup_trash_path = cr.clobber_backup_trash_path,
+            .clobber_backup_trashinfo_path = cr.clobber_backup_trashinfo_path,
+        }) catch return;
+    }
+    const log_path = util.UndoLog.logPath(ctx.arena, "copy-undo.zon") catch return;
+    CopyUndoLog.appendAndSave(ctx.arena, log_path, undo_list.items) catch {};
+}
+
+pub fn undoCopy(ctx: *Context) !void {
+    const log_path = try util.UndoLog.logPath(ctx.arena, "copy-undo.zon");
+    const entry = CopyUndoLog.popLatestAndSave(ctx.arena, log_path) catch |err| switch (err) {
+        error.UndoLogCorrupt => {
+            try ctx.reporter.pushError("undo log is corrupt, delete {s} to reset", .{log_path});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        },
+        else => return err,
+    };
+    if (entry == null) {
+        util.log("nothing to undo", .{});
+        return;
+    }
+    const files = entry.?.files;
+
+    // Pre-flight: validate every dest file/symlink still exists and clobber paths are intact.
+    var preflight_ok = true;
+    for (files) |file| {
+        if (file.kind != .directory) {
+            if (try ctx.cwd.statNoFollow(file.dest_path) == null) {
+                try ctx.reporter.pushError("undo failed: dest file missing: {s}", .{file.dest_path});
+                preflight_ok = false;
+            }
+        }
+        const clobber_info = ClobberInfo{
+            .clobber_trash_path = file.clobber_trash_path,
+            .clobber_trashinfo_path = file.clobber_trashinfo_path,
+            .clobber_backup_path = file.clobber_backup_path,
+            .clobber_backup_trash_path = file.clobber_backup_trash_path,
+            .clobber_backup_trashinfo_path = file.clobber_backup_trashinfo_path,
+        };
+        if (try util.clobber_undo.preflight(ctx.cwd, clobber_info)) |missing| {
+            try ctx.reporter.pushError("undo failed: clobber path missing: {s}", .{missing});
+            preflight_ok = false;
+        }
+    }
+    if (!preflight_ok) {
+        ctx.reporter.EXIT_WITH_REPORT(1);
+    }
+
+    // Step 1: Delete copied files and symlinks.
+    for (files) |file| {
+        if (file.kind == .file or file.kind == .sym_link) {
+            ctx.cwd.dir.deleteFile(file.dest_path) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => return err,
+            };
+        }
+    }
+
+    // Step 2: Delete dir_created directories deepest-first (reverse order).
+    var i = files.len;
+    while (i > 0) {
+        i -= 1;
+        const file = files[i];
+        if (file.kind == .directory and file.dir_created) {
+            ctx.cwd.dir.deleteDir(file.dest_path) catch |err| switch (err) {
+                error.DirNotEmpty => {
+                    if (!ctx.flag_silent) util.log("warning: directory not empty, skipped: {s}", .{file.dest_path});
+                },
+                else => return err,
+            };
+        }
+    }
+
+    // Step 3: Reverse clobber for all items.
+    for (files) |file| {
+        const clobber_info = ClobberInfo{
+            .clobber_trash_path = file.clobber_trash_path,
+            .clobber_trashinfo_path = file.clobber_trashinfo_path,
+            .clobber_backup_path = file.clobber_backup_path,
+            .clobber_backup_trash_path = file.clobber_backup_trash_path,
+            .clobber_backup_trashinfo_path = file.clobber_backup_trashinfo_path,
+        };
+        if (clobber_info.hasClobber()) {
+            try util.clobber_undo.execute(ctx.cwd, file.dest_path, clobber_info);
+        }
+    }
+
+    if (!ctx.flag_silent) util.log("undo complete", .{});
 }
 
 pub fn logUsage() void {
@@ -332,6 +494,7 @@ pub const Context = struct {
     fail_clobber: bool = false,
     flag_help: bool = false,
     flag_version: bool = false,
+    flag_undo: bool = false,
     flag_silent: bool = false,
     flag_dir_style: DirStyle = .NoCopy,
     flag_clobber_style: util.ClobberStyle = .NoClobber,
@@ -378,6 +541,8 @@ pub const Context = struct {
         h,
         @"--version",
         v,
+        @"--undo",
+        u,
         @"--silent",
         s,
         @"--trash",
@@ -400,6 +565,7 @@ pub const Context = struct {
                 .Flag => |flag| switch (flag) {
                     .h, .@"--help" => self.flag_help = true,
                     .v, .@"--version" => self.flag_version = true,
+                    .u, .@"--undo" => self.flag_undo = true,
                     .s, .@"--silent" => self.flag_silent = true,
                     .c, .@"--create" => self.flag_create = true,
                     .t, .@"--trash" => self.flag_clobber_style.prioritySet(.Trash),

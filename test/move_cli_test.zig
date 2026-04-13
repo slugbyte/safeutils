@@ -524,3 +524,162 @@ test "move directory" {
     defer testing.allocator.free(content);
     try testing.expectEqualStrings("dir content", content);
 }
+
+// ============================================================================
+// Undo helpers
+// ============================================================================
+fn runMoveIsolated(cwd_dir: fs.Dir, args: []const []const u8) util.CliResult {
+    const cwd_abs = cwd_dir.realpathAlloc(testing.allocator, ".") catch @panic("failed to resolve cwd path");
+    defer testing.allocator.free(cwd_abs);
+    const xdg_cache = std.fmt.allocPrint(testing.allocator, "{s}/.xdg-cache", .{cwd_abs}) catch @panic("OOM");
+    defer testing.allocator.free(xdg_cache);
+    const xdg_data = std.fmt.allocPrint(testing.allocator, "{s}/.xdg-data", .{cwd_abs}) catch @panic("OOM");
+    defer testing.allocator.free(xdg_data);
+    cwd_dir.makePath(".xdg-data/Trash/files") catch {};
+    cwd_dir.makePath(".xdg-data/Trash/info") catch {};
+    return runMoveWithEnv(cwd_dir, args, &.{
+        .{ .key = "HOME", .value = cwd_abs },
+        .{ .key = "XDG_CACHE_HOME", .value = xdg_cache },
+        .{ .key = "XDG_DATA_HOME", .value = xdg_data },
+    });
+}
+
+// ============================================================================
+// --undo: basic undo restores moved file
+// ============================================================================
+test "undo restores a moved file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "undo move");
+
+    const move_result = runMoveIsolated(tmp.dir, &.{ "src.txt", "dest.txt" });
+    defer move_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), move_result.code);
+    try testing.expect(!util.fileExists(tmp.dir, "src.txt"));
+
+    const undo_result = runMoveIsolated(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    const content = try util.readFile(tmp.dir, "src.txt");
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("undo move", content);
+    try testing.expect(!util.fileExists(tmp.dir, "dest.txt"));
+}
+
+// ============================================================================
+// --undo: nothing to undo
+// ============================================================================
+test "undo with empty log prints nothing to undo" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const result = runMoveIsolated(tmp.dir, &.{"--undo"});
+    defer result.deinit();
+    try testing.expectEqual(@as(?u8, 0), result.code);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "nothing to undo") != null);
+}
+
+// ============================================================================
+// --undo: undo with backup clobber reversal
+// ============================================================================
+test "undo reverses backup clobber" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "new content");
+    try util.writeFile(tmp.dir, "dest.txt", "old content");
+
+    const move_result = runMoveIsolated(tmp.dir, &.{ "--backup", "src.txt", "dest.txt" });
+    defer move_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), move_result.code);
+
+    const undo_result = runMoveIsolated(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    // src restored with new content.
+    const src_content = try util.readFile(tmp.dir, "src.txt");
+    defer testing.allocator.free(src_content);
+    try testing.expectEqualStrings("new content", src_content);
+
+    // dest restored with old content (backup reversed).
+    const dest_content = try util.readFile(tmp.dir, "dest.txt");
+    defer testing.allocator.free(dest_content);
+    try testing.expectEqualStrings("old content", dest_content);
+
+    // backup file should be gone.
+    try testing.expect(!util.fileExists(tmp.dir, "dest.txt.backup~"));
+}
+
+// ============================================================================
+// --undo: undo fails when original location is occupied
+// ============================================================================
+test "undo fails when original location is occupied" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "data");
+
+    const move_result = runMoveIsolated(tmp.dir, &.{ "src.txt", "dest.txt" });
+    defer move_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), move_result.code);
+
+    // Recreate src.
+    try util.writeFile(tmp.dir, "src.txt", "blocker");
+
+    const undo_result = runMoveIsolated(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expect(undo_result.code != null and undo_result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, undo_result.stderr, "original location occupied") != null);
+}
+
+// ============================================================================
+// --undo: undo multi-file move
+// ============================================================================
+test "undo restores all files from multi-move" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "a.txt", "aaa");
+    try util.writeFile(tmp.dir, "b.txt", "bbb");
+    try tmp.dir.makeDir("dest");
+
+    const move_result = runMoveIsolated(tmp.dir, &.{ "a.txt", "b.txt", "dest/" });
+    defer move_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), move_result.code);
+
+    const undo_result = runMoveIsolated(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    const a = try util.readFile(tmp.dir, "a.txt");
+    defer testing.allocator.free(a);
+    try testing.expectEqualStrings("aaa", a);
+
+    const b = try util.readFile(tmp.dir, "b.txt");
+    defer testing.allocator.free(b);
+    try testing.expectEqualStrings("bbb", b);
+}
+
+// ============================================================================
+// --undo: short flag -u works
+// ============================================================================
+test "short flag -u works for move undo" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "short.txt", "short");
+
+    const move_result = runMoveIsolated(tmp.dir, &.{ "short.txt", "moved.txt" });
+    defer move_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), move_result.code);
+
+    const undo_result = runMoveIsolated(tmp.dir, &.{"-u"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    try testing.expect(util.fileExists(tmp.dir, "short.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, "moved.txt"));
+}

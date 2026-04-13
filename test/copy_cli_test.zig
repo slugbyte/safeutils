@@ -423,3 +423,158 @@ test "copy src not found error" {
     try testing.expect(result.code != null and result.code.? != 0);
     try testing.expect(std.mem.indexOf(u8, result.stderr, "src file not found") != null);
 }
+
+// ============================================================================
+// Undo helpers
+// ============================================================================
+fn runCopyIsolated(cwd_dir: fs.Dir, args: []const []const u8) util.CliResult {
+    const cwd_abs = cwd_dir.realpathAlloc(testing.allocator, ".") catch @panic("failed to resolve cwd path");
+    defer testing.allocator.free(cwd_abs);
+    const xdg_cache = std.fmt.allocPrint(testing.allocator, "{s}/.xdg-cache", .{cwd_abs}) catch @panic("OOM");
+    defer testing.allocator.free(xdg_cache);
+    const xdg_data = std.fmt.allocPrint(testing.allocator, "{s}/.xdg-data", .{cwd_abs}) catch @panic("OOM");
+    defer testing.allocator.free(xdg_data);
+    cwd_dir.makePath(".xdg-data/Trash/files") catch {};
+    cwd_dir.makePath(".xdg-data/Trash/info") catch {};
+    return runCopyWithEnv(cwd_dir, args, &.{
+        .{ .key = "HOME", .value = cwd_abs },
+        .{ .key = "XDG_CACHE_HOME", .value = xdg_cache },
+        .{ .key = "XDG_DATA_HOME", .value = xdg_data },
+    });
+}
+
+// ============================================================================
+// --undo: basic undo removes copied file
+// ============================================================================
+test "undo removes a copied file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "undo copy");
+
+    const copy_result = runCopyIsolated(tmp.dir, &.{ "src.txt", "dest.txt" });
+    defer copy_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), copy_result.code);
+    try testing.expect(util.fileExists(tmp.dir, "dest.txt"));
+
+    const undo_result = runCopyIsolated(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    // src should still exist (it was copied, not moved).
+    try testing.expect(util.fileExists(tmp.dir, "src.txt"));
+    // dest should be removed by undo.
+    try testing.expect(!util.fileExists(tmp.dir, "dest.txt"));
+}
+
+// ============================================================================
+// --undo: nothing to undo
+// ============================================================================
+test "copy undo with empty log prints nothing to undo" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const result = runCopyIsolated(tmp.dir, &.{"--undo"});
+    defer result.deinit();
+    try testing.expectEqual(@as(?u8, 0), result.code);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "nothing to undo") != null);
+}
+
+// ============================================================================
+// --undo: undo directory copy removes created dirs
+// ============================================================================
+test "undo removes recursively copied directory" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makeDir("srcdir");
+    try util.writeFile(tmp.dir, "srcdir/a.txt", "aaa");
+
+    const copy_result = runCopyIsolated(tmp.dir, &.{ "-d", "srcdir", "destdir" });
+    defer copy_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), copy_result.code);
+    try testing.expect(util.dirExists(tmp.dir, "destdir"));
+
+    const undo_result = runCopyIsolated(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    try testing.expect(!util.dirExists(tmp.dir, "destdir"));
+    // src should still exist.
+    try testing.expect(util.dirExists(tmp.dir, "srcdir"));
+}
+
+// ============================================================================
+// --undo: undo with backup clobber reversal
+// ============================================================================
+test "copy undo reverses backup clobber" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "new");
+    try util.writeFile(tmp.dir, "dest.txt", "old");
+
+    const copy_result = runCopyIsolated(tmp.dir, &.{ "--backup", "src.txt", "dest.txt" });
+    defer copy_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), copy_result.code);
+
+    const undo_result = runCopyIsolated(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    // dest should be restored to old content.
+    const dest_content = try util.readFile(tmp.dir, "dest.txt");
+    defer testing.allocator.free(dest_content);
+    try testing.expectEqualStrings("old", dest_content);
+
+    // backup file should be gone.
+    try testing.expect(!util.fileExists(tmp.dir, "dest.txt.backup~"));
+}
+
+// ============================================================================
+// --undo: short flag -u works
+// ============================================================================
+test "short flag -u works for copy undo" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "src.txt", "short");
+
+    const copy_result = runCopyIsolated(tmp.dir, &.{ "src.txt", "dest.txt" });
+    defer copy_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), copy_result.code);
+
+    const undo_result = runCopyIsolated(tmp.dir, &.{"-u"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    try testing.expect(!util.fileExists(tmp.dir, "dest.txt"));
+}
+
+// ============================================================================
+// --undo: undo only undoes the most recent copy
+// ============================================================================
+test "copy undo only undoes the most recent operation" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "first.txt", "first");
+    try util.writeFile(tmp.dir, "second.txt", "second");
+
+    const copy1 = runCopyIsolated(tmp.dir, &.{ "first.txt", "first_dest.txt" });
+    defer copy1.deinit();
+    try testing.expectEqual(@as(?u8, 0), copy1.code);
+
+    const copy2 = runCopyIsolated(tmp.dir, &.{ "second.txt", "second_dest.txt" });
+    defer copy2.deinit();
+    try testing.expectEqual(@as(?u8, 0), copy2.code);
+
+    const undo_result = runCopyIsolated(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    // first_dest should still exist (not undone).
+    try testing.expect(util.fileExists(tmp.dir, "first_dest.txt"));
+    // second_dest should be removed.
+    try testing.expect(!util.fileExists(tmp.dir, "second_dest.txt"));
+}

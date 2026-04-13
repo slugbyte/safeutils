@@ -1,6 +1,7 @@
 //! By convention, root.zig is the root source file when making a library.
 const std = @import("std");
 
+pub const clobber_undo = @import("./util/clobber_undo.zig");
 pub const env = @import("./util/env.zig");
 pub const dirpath = @import("./util/dirpath.zig");
 pub const term = @import("./util/term.zig");
