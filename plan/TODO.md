@@ -1,4 +1,5 @@
 # TODO 
+* make better error messages for --undo
 * `copy` --progress display a progress bar instead of normal verbose
 
 * Support `--` end-of-flags separator to allow filenames starting with `-`

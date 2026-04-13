@@ -112,6 +112,10 @@ pub fn main() !void {
     }
 
     if (ctx.flag_undo) {
+        if (ctx.positionals.len > 0) {
+            try ctx.reporter.pushError("--undo takes no arguments", .{});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        }
         return undoTrash(&ctx);
     }
 
@@ -174,7 +178,8 @@ pub fn main() !void {
     if (status == 0 and undo_files.items.len > 0) {
         const log_path = util.UndoLog.logPath(ctx.arena, "trash-undo.zon") catch null;
         if (log_path) |path| {
-            TrashUndoLog.appendAndSave(ctx.arena, path, undo_files.items) catch {};
+            const was_reset = TrashUndoLog.appendAndSave(ctx.arena, path, undo_files.items) catch false;
+            if (was_reset) util.log("warning: undo history was corrupt and has been reset", .{});
         }
     }
 
@@ -381,18 +386,20 @@ pub fn fetchTrash(ctx: *Context, trash_name: []const u8) !void {
 
 pub fn undoTrash(ctx: *Context) !void {
     const log_path = try util.UndoLog.logPath(ctx.arena, "trash-undo.zon");
-    const entry = TrashUndoLog.popLatestAndSave(ctx.arena, log_path) catch |err| switch (err) {
+    const entries = TrashUndoLog.read(ctx.arena, log_path) catch |err| switch (err) {
         error.UndoLogCorrupt => {
-            try ctx.reporter.pushError("undo log is corrupt, delete {s} to reset", .{log_path});
-            ctx.reporter.EXIT_WITH_REPORT(1);
+            try TrashUndoLog.write(log_path, &.{});
+            util.log("warning: undo history was corrupt and has been reset", .{});
+            util.log("nothing to undo", .{});
+            return;
         },
         else => return err,
     };
-    if (entry == null) {
+    if (entries.len == 0) {
         util.log("nothing to undo", .{});
         return;
     }
-    const files = entry.?.files;
+    const files = entries[entries.len - 1].files;
 
     // Pre-flight: validate every restore target before moving anything.
     var preflight_ok = true;
@@ -425,6 +432,9 @@ pub fn undoTrash(ctx: *Context) !void {
         }
         if (!ctx.flag_silent) util.log("restored: {s}", .{file.original_path});
     }
+
+    // Remove the entry from the log only after successful undo.
+    try TrashUndoLog.write(log_path, entries[0 .. entries.len - 1]);
 }
 
 pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {

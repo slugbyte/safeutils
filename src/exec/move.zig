@@ -85,6 +85,10 @@ pub fn main() !void {
     }
 
     if (ctx.flag_undo) {
+        if (ctx.positionals.len > 0) {
+            try ctx.reporter.pushError("--undo takes no arguments", .{});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        }
         return undoMove(&ctx);
     }
 
@@ -319,23 +323,26 @@ pub fn move(ctx: *Context, src_path: [:0]const u8, dest_path: [:0]const u8) !Mov
 
 fn persistUndoLog(allocator: Allocator, undo_files: []const MoveUndoData) void {
     const log_path = util.UndoLog.logPath(allocator, "move-undo.zon") catch return;
-    MoveUndoLog.appendAndSave(allocator, log_path, undo_files) catch {};
+    const was_reset = MoveUndoLog.appendAndSave(allocator, log_path, undo_files) catch false;
+    if (was_reset) util.log("warning: undo history was corrupt and has been reset", .{});
 }
 
 pub fn undoMove(ctx: *Context) !void {
     const log_path = try util.UndoLog.logPath(ctx.arena, "move-undo.zon");
-    const entry = MoveUndoLog.popLatestAndSave(ctx.arena, log_path) catch |err| switch (err) {
+    const entries = MoveUndoLog.read(ctx.arena, log_path) catch |err| switch (err) {
         error.UndoLogCorrupt => {
-            try ctx.reporter.pushError("undo log is corrupt, delete {s} to reset", .{log_path});
-            ctx.reporter.EXIT_WITH_REPORT(1);
+            try MoveUndoLog.write(log_path, &.{});
+            util.log("warning: undo history was corrupt and has been reset", .{});
+            util.log("nothing to undo", .{});
+            return;
         },
         else => return err,
     };
-    if (entry == null) {
+    if (entries.len == 0) {
         util.log("nothing to undo", .{});
         return;
     }
-    const files = entry.?.files;
+    const files = entries[entries.len - 1].files;
 
     // Pre-flight: validate every restore target before moving anything.
     var preflight_ok = true;
@@ -366,6 +373,15 @@ pub fn undoMove(ctx: *Context) !void {
                 preflight_ok = false;
             }
         }
+        if (clobber.hasClobber()) {
+            if (dirname(file.dest_path)) |parent| {
+                const parent_stat = try ctx.cwd.statNoFollow(parent);
+                if (parent_stat == null or parent_stat.?.kind != .directory) {
+                    try ctx.reporter.pushError("undo failed: clobber restore parent missing: {s}", .{parent});
+                    preflight_ok = false;
+                }
+            }
+        }
     }
     if (!preflight_ok) {
         ctx.reporter.EXIT_WITH_REPORT(1);
@@ -384,6 +400,9 @@ pub fn undoMove(ctx: *Context) !void {
         try util.clobber_undo.execute(ctx.cwd, file.dest_path, clobber);
         if (!ctx.flag_silent) util.log("restored: {s}", .{file.src_path});
     }
+
+    // Remove the entry from the log only after successful undo.
+    try MoveUndoLog.write(log_path, entries[0 .. entries.len - 1]);
 }
 
 const Context = struct {

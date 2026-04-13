@@ -59,8 +59,16 @@ pub fn UndoLog(comptime FileEntry: type) type {
 
         /// Read existing log, append a new entry, trim to max_entries, and
         /// write back. Intended for the happy-path after a successful command.
-        pub fn appendAndSave(allocator: Allocator, log_path: [:0]const u8, files: []const FileEntry) !void {
-            const existing = try read(allocator, log_path);
+        /// Returns true if the existing log was corrupt and has been reset.
+        pub fn appendAndSave(allocator: Allocator, log_path: [:0]const u8, files: []const FileEntry) !bool {
+            var was_corrupt = false;
+            const existing = read(allocator, log_path) catch |err| switch (err) {
+                error.UndoLogCorrupt => blk: {
+                    was_corrupt = true;
+                    break :blk &[_]Entry{};
+                },
+                else => return err,
+            };
             const start = if (existing.len >= max_entries) existing.len - (max_entries - 1) else 0;
             const kept = existing[start..];
 
@@ -71,17 +79,7 @@ pub fn UndoLog(comptime FileEntry: type) type {
                 .files = files,
             });
             try write(log_path, list.items);
-        }
-
-        /// Read the log, remove the newest (last) entry, and rewrite.
-        /// Returns the removed entry, or null if the log was empty.
-        pub fn popLatestAndSave(allocator: Allocator, log_path: [:0]const u8) !?Entry {
-            const entries = try read(allocator, log_path);
-            if (entries.len == 0) return null;
-            const latest = entries[entries.len - 1];
-            const remaining = entries[0 .. entries.len - 1];
-            try write(log_path, remaining);
-            return latest;
+            return was_corrupt;
         }
     };
 }

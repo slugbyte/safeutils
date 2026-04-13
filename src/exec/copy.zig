@@ -83,6 +83,10 @@ pub fn main() !void {
     }
 
     if (ctx.flag_undo) {
+        if (ctx.positionals.len > 0) {
+            try ctx.reporter.pushError("--undo takes no arguments", .{});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        }
         return undoCopy(&ctx);
     }
 
@@ -395,23 +399,26 @@ fn persistUndoLog(ctx: *Context, copy_list: []const CopyItem, clobber_results: [
         }) catch return;
     }
     const log_path = util.UndoLog.logPath(ctx.arena, "copy-undo.zon") catch return;
-    CopyUndoLog.appendAndSave(ctx.arena, log_path, undo_list.items) catch {};
+    const was_reset = CopyUndoLog.appendAndSave(ctx.arena, log_path, undo_list.items) catch false;
+    if (was_reset) util.log("warning: undo history was corrupt and has been reset", .{});
 }
 
 pub fn undoCopy(ctx: *Context) !void {
     const log_path = try util.UndoLog.logPath(ctx.arena, "copy-undo.zon");
-    const entry = CopyUndoLog.popLatestAndSave(ctx.arena, log_path) catch |err| switch (err) {
+    const entries = CopyUndoLog.read(ctx.arena, log_path) catch |err| switch (err) {
         error.UndoLogCorrupt => {
-            try ctx.reporter.pushError("undo log is corrupt, delete {s} to reset", .{log_path});
-            ctx.reporter.EXIT_WITH_REPORT(1);
+            try CopyUndoLog.write(log_path, &.{});
+            util.log("warning: undo history was corrupt and has been reset", .{});
+            util.log("nothing to undo", .{});
+            return;
         },
         else => return err,
     };
-    if (entry == null) {
+    if (entries.len == 0) {
         util.log("nothing to undo", .{});
         return;
     }
-    const files = entry.?.files;
+    const files = entries[entries.len - 1].files;
 
     // Pre-flight: validate every dest file/symlink still exists and clobber paths are intact.
     var preflight_ok = true;
@@ -432,6 +439,15 @@ pub fn undoCopy(ctx: *Context) !void {
         if (try util.clobber_undo.preflight(ctx.cwd, clobber_info)) |missing| {
             try ctx.reporter.pushError("undo failed: clobber path missing: {s}", .{missing});
             preflight_ok = false;
+        }
+        if (clobber_info.hasClobber()) {
+            if (std.fs.path.dirname(file.dest_path)) |parent| {
+                const parent_stat = try ctx.cwd.statNoFollow(parent);
+                if (parent_stat == null or parent_stat.?.kind != .directory) {
+                    try ctx.reporter.pushError("undo failed: clobber restore parent missing: {s}", .{parent});
+                    preflight_ok = false;
+                }
+            }
         }
     }
     if (!preflight_ok) {
@@ -476,6 +492,9 @@ pub fn undoCopy(ctx: *Context) !void {
             try util.clobber_undo.execute(ctx.cwd, file.dest_path, clobber_info);
         }
     }
+
+    // Remove the entry from the log only after successful undo.
+    try CopyUndoLog.write(log_path, entries[0 .. entries.len - 1]);
 
     if (!ctx.flag_silent) util.log("undo complete", .{});
 }
