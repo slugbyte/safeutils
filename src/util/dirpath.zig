@@ -3,6 +3,19 @@ const util = @import("../root.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
+/// Returns $XDG_CACHE_HOME if set, otherwise falls back to $HOME/.cache.
+pub fn xdgCacheHome(allocator: Allocator) ![]const u8 {
+    if (try util.env.getOptional(allocator, "XDG_CACHE_HOME")) |xdg_path| {
+        return xdg_path;
+    }
+    var home_sa = util.StackFilepathAllocator.empty;
+    const home_dirpath = try home(home_sa.allocatorInvalidatePrevious());
+    return std.fs.path.join(allocator, &.{
+        home_dirpath,
+        ".cache",
+    });
+}
+
 /// Returns $XDG_DATA_HOME if set, otherwise falls back to $HOME/.local/share.
 fn xdgDataHome(allocator: Allocator) ![]const u8 {
     if (try util.env.getOptional(allocator, "XDG_DATA_HOME")) |xdg_path| {

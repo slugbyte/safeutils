@@ -12,6 +12,7 @@ pub const ArgIterator = @import("./util/ArgIterator.zig");
 pub const FlagIterator = @import("./util/FlagIterator.zig").FlagIterator;
 pub const FlagParser = @import("./util/FlagParser.zig");
 pub const Reporter = @import("./util/Reporter.zig");
+pub const UndoLog = @import("./util/UndoLog.zig");
 pub const WorkDir = @import("./util/WorkDir.zig");
 pub const NullByteDetectorWriter = @import("./util/NullByteDetectorWriter.zig");
 pub const StackAllocator = @import("./util/StackAllocator.zig").StackAllocator;

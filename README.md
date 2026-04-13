@@ -19,16 +19,19 @@ a few nice modern features for fun.
 ```
 USAGE: trash files.. (--flags)
   Move files to the trash.
-  Revert trash fetch back to where they came from. 
+  Revert trash fetch back to where they came from.
   Fetch trash files to current dir.
+
+  Undo:
+    -u --undo                 Undo the most recent trash operation.
 
   Revert and Fetch: (linux-only)
     -r --revert trashfile     Revert a trash file to its original location.
     -f --fetch  trashfile     Fetch a trash file to the current directory.
                               Fetch and Revert also manage .trashinfo files.
 
-    FZF: 
-    -R --revert-fzf           Use fzf to revert a trash file. 
+    FZF:
+    -R --revert-fzf           Use fzf to revert a trash file.
     -F --fetch-fzf            Use fzf to fetch a trash file to the current dir.
 
     FZF Preview Options: (Combine with --revert-fzf or --fetch-fzf)
@@ -42,7 +45,7 @@ USAGE: trash files.. (--flags)
   -s --silent               Only print errors.
   -v --version              Print version.
   -h --help                 Display this help.
- 
+
   OPTIONAL DEPS:
   fzf: https://github.com/junegunn/fzf (fuzzy find)
   viu: https://github.com/atanunq/viu  (image preview)

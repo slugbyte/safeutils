@@ -639,3 +639,238 @@ test "TEST: fetch fzf oversized output returns clear error" {
         std.mem.indexOf(u8, result.stdout, "fzf selection output exceeded") != null;
     try testing.expect(saw_error);
 }
+
+// ============================================================================
+// --undo: basic undo restores trashed file
+// ============================================================================
+test "TEST: undo restores a single trashed file" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "undo_me.txt", "undo data");
+
+    const trash_result = runTrash(tmp.dir, &.{"undo_me.txt"});
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+    try testing.expect(!util.fileExists(tmp.dir, "undo_me.txt"));
+
+    const undo_result = runTrash(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    const content = try util.readFile(tmp.dir, "undo_me.txt");
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("undo data", content);
+
+    // Trash file and trashinfo should be cleaned up.
+    try testing.expect(!util.fileExists(tmp.dir, ".xdg-data/Trash/files/undo_me.txt"));
+    try testing.expect(!util.fileExists(tmp.dir, ".xdg-data/Trash/info/undo_me.txt.trashinfo"));
+}
+
+// ============================================================================
+// --undo: nothing to undo
+// ============================================================================
+test "TEST: undo with empty log prints nothing to undo" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const result = runTrash(tmp.dir, &.{"--undo"});
+    defer result.deinit();
+    try testing.expectEqual(@as(?u8, 0), result.code);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "nothing to undo") != null);
+}
+
+// ============================================================================
+// --undo: undo multiple files from a single trash command
+// ============================================================================
+test "TEST: undo restores all files from one trash operation" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "a.txt", "aaa");
+    try util.writeFile(tmp.dir, "b.txt", "bbb");
+
+    const trash_result = runTrash(tmp.dir, &.{ "a.txt", "b.txt" });
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+
+    const undo_result = runTrash(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    const content_a = try util.readFile(tmp.dir, "a.txt");
+    defer testing.allocator.free(content_a);
+    try testing.expectEqualStrings("aaa", content_a);
+
+    const content_b = try util.readFile(tmp.dir, "b.txt");
+    defer testing.allocator.free(content_b);
+    try testing.expectEqualStrings("bbb", content_b);
+}
+
+// ============================================================================
+// --undo: conflict when original path already exists
+// ============================================================================
+test "TEST: undo fails when original path already exists" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "conflict.txt", "original");
+
+    const trash_result = runTrash(tmp.dir, &.{"conflict.txt"});
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+
+    // Recreate file at original location.
+    try util.writeFile(tmp.dir, "conflict.txt", "blocker");
+
+    const undo_result = runTrash(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expect(undo_result.code != null and undo_result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, undo_result.stderr, "original path already exists") != null);
+}
+
+// ============================================================================
+// --undo: parent directory missing
+// ============================================================================
+test "TEST: undo fails when parent directory is missing" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makeDir("subdir");
+    try util.writeFile(tmp.dir, "subdir/deep.txt", "deep");
+
+    const trash_result = runTrash(tmp.dir, &.{"subdir/deep.txt"});
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+
+    // Remove the parent directory.
+    try tmp.dir.deleteDir("subdir");
+
+    const undo_result = runTrash(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expect(undo_result.code != null and undo_result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, undo_result.stderr, "parent directory missing") != null);
+}
+
+// ============================================================================
+// --undo: mutually exclusive with --revert
+// ============================================================================
+test "TEST: undo is mutually exclusive with other mode flags" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const result = runTrash(tmp.dir, &.{ "--undo", "--revert", "foo.txt" });
+    defer result.deinit();
+    try testing.expect(result.code != null and result.code.? != 0);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "mutually exclusive") != null);
+}
+
+// ============================================================================
+// --undo: short flag -u works
+// ============================================================================
+test "TEST: short flag -u works for undo" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "short.txt", "short flag");
+
+    const trash_result = runTrash(tmp.dir, &.{"short.txt"});
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+
+    const undo_result = runTrash(tmp.dir, &.{"-u"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    const content = try util.readFile(tmp.dir, "short.txt");
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("short flag", content);
+}
+
+// ============================================================================
+// --undo: only undoes the most recent operation
+// ============================================================================
+test "TEST: undo only undoes the most recent trash operation" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.writeFile(tmp.dir, "first.txt", "first");
+    try util.writeFile(tmp.dir, "second.txt", "second");
+
+    // Trash first, then second (separate commands = separate undo entries).
+    const trash1 = runTrash(tmp.dir, &.{"first.txt"});
+    defer trash1.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash1.code);
+
+    const trash2 = runTrash(tmp.dir, &.{"second.txt"});
+    defer trash2.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash2.code);
+
+    // Undo should restore second.txt but not first.txt.
+    const undo_result = runTrash(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    try testing.expect(!util.fileExists(tmp.dir, "first.txt"));
+    try testing.expect(util.fileExists(tmp.dir, "second.txt"));
+}
+
+// ============================================================================
+// --undo: partial failure does not write undo entry
+// ============================================================================
+test "TEST: failed trash does not write undo entry" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Trash a mix of existing and missing files — command exits non-zero.
+    try util.writeFile(tmp.dir, "good.txt", "good");
+    const trash_result = runTrash(tmp.dir, &.{ "good.txt", "missing.txt" });
+    defer trash_result.deinit();
+    try testing.expect(trash_result.code != null and trash_result.code.? != 0);
+
+    // Undo should report nothing to undo since the command failed.
+    const undo_result = runTrash(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+    try testing.expect(std.mem.indexOf(u8, undo_result.stderr, "nothing to undo") != null);
+}
+
+// ============================================================================
+// --undo: undo directory
+// ============================================================================
+test "TEST: undo restores a trashed directory" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makeDir("mydir");
+    try util.writeFile(tmp.dir, "mydir/inner.txt", "inner");
+
+    const trash_result = runTrash(tmp.dir, &.{"mydir"});
+    defer trash_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), trash_result.code);
+    try testing.expect(!util.dirExists(tmp.dir, "mydir"));
+
+    const undo_result = runTrash(tmp.dir, &.{"--undo"});
+    defer undo_result.deinit();
+    try testing.expectEqual(@as(?u8, 0), undo_result.code);
+
+    const content = try util.readFile(tmp.dir, "mydir/inner.txt");
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("inner", content);
+}

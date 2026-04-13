@@ -70,12 +70,16 @@ pub fn runBinaryWithIsolatedTrash(exe_path: []const u8, cwd_dir: fs.Dir, args: [
     const xdg_data_home = std.fmt.allocPrint(testing.allocator, "{s}/.xdg-data", .{cwd_abs}) catch @panic("OOM");
     defer testing.allocator.free(xdg_data_home);
 
+    const xdg_cache_home = std.fmt.allocPrint(testing.allocator, "{s}/.xdg-cache", .{cwd_abs}) catch @panic("OOM");
+    defer testing.allocator.free(xdg_cache_home);
+
     cwd_dir.makePath(".xdg-data/Trash/files") catch @panic("failed to create isolated trash files dir");
     cwd_dir.makePath(".xdg-data/Trash/info") catch @panic("failed to create isolated trash info dir");
 
     return runBinaryWithEnv(exe_path, cwd_dir, args, &.{
         .{ .key = "HOME", .value = cwd_abs },
         .{ .key = "XDG_DATA_HOME", .value = xdg_data_home },
+        .{ .key = "XDG_CACHE_HOME", .value = xdg_cache_home },
     });
 }
 

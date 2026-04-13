@@ -13,16 +13,19 @@ const TrashPaths = util.trash_paths.TrashPaths;
 pub const help_msg =
     \\USAGE: trash files.. (--flags)
     \\  Move files to the trash.
-    \\  Revert trash fetch back to where they came from. 
+    \\  Revert trash fetch back to where they came from.
     \\  Fetch trash files to current dir.
+    \\
+    \\  Undo:
+    \\    -u --undo                 Undo the most recent trash operation.
     \\
     \\  Revert and Fetch: (linux-only)
     \\    -r --revert trashfile     Revert a trash file to its original location.
     \\    -f --fetch  trashfile     Fetch a trash file to the current directory.
     \\                              Fetch and Revert also manage .trashinfo files.
     \\
-    \\    FZF: 
-    \\    -R --revert-fzf           Use fzf to revert a trash file. 
+    \\    FZF:
+    \\    -R --revert-fzf           Use fzf to revert a trash file.
     \\    -F --fetch-fzf            Use fzf to fetch a trash file to the current dir.
     \\
     \\    FZF Preview Options: (Combine with --revert-fzf or --fetch-fzf)
@@ -36,7 +39,7 @@ pub const help_msg =
     \\  -s --silent               Only print errors.
     \\  -v --version              Print version.
     \\  -h --help                 Display this help.
-    \\ 
+    \\
     \\  OPTIONAL DEPS:
     \\  fzf: https://github.com/junegunn/fzf (fuzzy find)
     \\  viu: https://github.com/atanunq/viu  (image preview)
@@ -50,10 +53,12 @@ const FZFMode = enum {
 const MAX_FZF_SELECTION_BYTES: usize = 1024 * 1024;
 
 const UndoData = struct {
-    trashinfo_path: []const u8,
-    trash_path: []const u8,
     original_path: []const u8,
+    trash_path: []const u8,
+    trashinfo_path: []const u8,
 };
+
+const TrashUndoLog = util.UndoLog.UndoLog(UndoData);
 
 pub fn main() !void {
     // Arena intentionally not freed -- OS reclaims on process exit
@@ -106,11 +111,16 @@ pub fn main() !void {
         return fzfPreview(&ctx, value);
     }
 
+    if (ctx.flag_undo) {
+        return undoTrash(&ctx);
+    }
+
     if (ctx.positionals.len == 0) {
         util.log("USAGE: trash [file]...", .{});
         std.process.exit(1);
     }
 
+    var undo_files = std.ArrayList(UndoData).empty;
     var success_count: usize = 0;
     var fail_count: usize = 0;
     for (ctx.positionals) |path| {
@@ -118,6 +128,10 @@ pub fn main() !void {
             try ctx.reporter.pushWarning("file not found: {s}", .{path});
             continue;
         };
+
+        // Capture absolute original path before trashing.
+        const original_path = try ctx.cwd.realpathZ(ctx.arena, path);
+
         const trash_path = ctx.cwd.trashAt(ctx.arena, ctx.trash_paths, path, stat.kind) catch |err| switch (err) {
             else => ctx.reporter.PANIC_WITH_REPORT("unexpected error: {t}", .{err}),
             error.TrashFileKindNotSupported => {
@@ -126,6 +140,23 @@ pub fn main() !void {
                 continue;
             },
         };
+
+        // Record undo metadata for this file.
+        const abs_trash_path = try ctx.cwd.realpathZ(ctx.arena, trash_path);
+        const trashinfo_path: []const u8 = if (ctx.trash_paths.info_dir) |info_dir|
+            try util.trashinfo.filepathAt(ctx.arena, info_dir, std.fs.path.basename(trash_path))
+        else
+            "";
+        const abs_trashinfo_path: []const u8 = if (trashinfo_path.len > 0)
+            try ctx.cwd.realpathZ(ctx.arena, trashinfo_path)
+        else
+            "";
+        try undo_files.append(ctx.arena, .{
+            .original_path = original_path,
+            .trash_path = abs_trash_path,
+            .trashinfo_path = abs_trashinfo_path,
+        });
+
         success_count +|= 1;
         if (!ctx.flag_silent) util.log("{s} > $trash/{s}", .{ path, std.fs.path.basename(trash_path) });
     }
@@ -138,6 +169,15 @@ pub fn main() !void {
     }
 
     const status: u8 = if (ctx.reporter.isError() or ctx.reporter.isWarning()) 1 else 0;
+
+    // Only persist undo log when the entire command succeeded.
+    if (status == 0 and undo_files.items.len > 0) {
+        const log_path = util.UndoLog.logPath(ctx.arena, "trash-undo.zon") catch null;
+        if (log_path) |path| {
+            TrashUndoLog.appendAndSave(ctx.arena, path, undo_files.items) catch {};
+        }
+    }
+
     ctx.reporter.EXIT_WITH_REPORT(status);
 }
 
@@ -339,6 +379,54 @@ pub fn fetchTrash(ctx: *Context, trash_name: []const u8) !void {
     }
 }
 
+pub fn undoTrash(ctx: *Context) !void {
+    const log_path = try util.UndoLog.logPath(ctx.arena, "trash-undo.zon");
+    const entry = TrashUndoLog.popLatestAndSave(ctx.arena, log_path) catch |err| switch (err) {
+        error.UndoLogCorrupt => {
+            try ctx.reporter.pushError("undo log is corrupt, delete {s} to reset", .{log_path});
+            ctx.reporter.EXIT_WITH_REPORT(1);
+        },
+        else => return err,
+    };
+    if (entry == null) {
+        util.log("nothing to undo", .{});
+        return;
+    }
+    const files = entry.?.files;
+
+    // Pre-flight: validate every restore target before moving anything.
+    var preflight_ok = true;
+    for (files) |file| {
+        if (try ctx.cwd.statNoFollow(file.trash_path) == null) {
+            try ctx.reporter.pushError("undo failed: trash file missing: {s}", .{file.trash_path});
+            preflight_ok = false;
+        }
+        if (try ctx.cwd.statNoFollow(file.original_path) != null) {
+            try ctx.reporter.pushError("undo failed: original path already exists: {s}", .{file.original_path});
+            preflight_ok = false;
+        }
+        if (std.fs.path.dirname(file.original_path)) |parent| {
+            const parent_stat = try ctx.cwd.statNoFollow(parent);
+            if (parent_stat == null or parent_stat.?.kind != .directory) {
+                try ctx.reporter.pushError("undo failed: parent directory missing: {s}", .{parent});
+                preflight_ok = false;
+            }
+        }
+    }
+    if (!preflight_ok) {
+        ctx.reporter.EXIT_WITH_REPORT(1);
+    }
+
+    // Execute: restore each file to its original location.
+    for (files) |file| {
+        try ctx.cwd.move(file.trash_path, file.original_path);
+        if (builtin.os.tag == .linux and file.trashinfo_path.len > 0) {
+            ctx.cwd.dir.deleteFile(file.trashinfo_path) catch {};
+        }
+        if (!ctx.flag_silent) util.log("restored: {s}", .{file.original_path});
+    }
+}
+
 pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
     if (builtin.os.tag != .linux) {
         try ctx.reporter.pushError("--fetch and --revert are only supported on linux", .{});
@@ -475,6 +563,7 @@ const Context = struct {
     args: util.ArgIterator = undefined,
     positionals: [][:0]const u8 = undefined,
     flag_help: bool = false,
+    flag_undo: bool = false,
     flag_revert: ?[:0]const u8 = null,
     flag_revert_fzf: bool = false,
     flag_fetch: ?[:0]const u8 = null,
@@ -504,13 +593,14 @@ const Context = struct {
 
         // Mode flags are mutually exclusive.
         var mode_count: u8 = 0;
+        if (result.flag_undo) mode_count += 1;
         if (result.flag_revert != null) mode_count += 1;
         if (result.flag_fetch != null) mode_count += 1;
         if (result.flag_revert_fzf) mode_count += 1;
         if (result.flag_fetch_fzf) mode_count += 1;
         if (result.flag_fzf_preview != null) mode_count += 1;
         if (mode_count > 1) {
-            try result.reporter.pushError("--revert, --fetch, --revert-fzf, --fetch-fzf, and --fzf-preview are mutually exclusive", .{});
+            try result.reporter.pushError("--undo, --revert, --fetch, --revert-fzf, --fetch-fzf, and --fzf-preview are mutually exclusive", .{});
         }
 
         result.trash_paths = util.trash_paths.resolve(arena, .{
@@ -552,6 +642,8 @@ const Context = struct {
         v,
         @"--silent",
         s,
+        @"--undo",
+        u,
         @"--fetch",
         f,
         @"--fetch-fzf",
@@ -579,6 +671,7 @@ const Context = struct {
                         .h, .@"--help" => self.flag_help = true,
                         .v, .@"--version" => self.flag_version = true,
                         .s, .@"--silent" => self.flag_silent = true,
+                        .u, .@"--undo" => self.flag_undo = true,
                         .F, .@"--fetch-fzf" => self.flag_fetch_fzf = true,
                         .f, .@"--fetch" => {
                             self.flag_fetch = iter.next();
