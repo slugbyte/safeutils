@@ -130,7 +130,7 @@ pub fn main() !void {
     var fail_count: usize = 0;
     for (ctx.positionals) |path| {
         const stat = try ctx.cwd.statNoFollow(path) orelse {
-            try ctx.reporter.pushWarning("file not found: {s}", .{path});
+            try ctx.reporter.pushWarning("file not found: ({s})", .{path});
             continue;
         };
 
@@ -141,7 +141,7 @@ pub fn main() !void {
             else => ctx.reporter.PANIC_WITH_REPORT("unexpected error: {t}", .{err}),
             error.TrashFileKindNotSupported => {
                 fail_count +|= 1;
-                try ctx.reporter.pushWarning("trash does not support '{t}' files, unable to trash: {s}", .{ stat.kind, path });
+                try ctx.reporter.pushWarning("trash does not support '{t}' files, unable to trash: ({s})", .{ stat.kind, path });
                 continue;
             },
         };
@@ -210,10 +210,10 @@ pub const RevertInfo = struct {
         const trashinfo_stat = try ctx.cwd.statNoFollow(trashinfo_path);
 
         if (trash_stat == null) {
-            try ctx.reporter.pushError("could not find trash file: {s}", .{trash_path});
+            try ctx.reporter.pushError("trash file not found: ({s})", .{trash_path});
         }
         if (trashinfo_stat == null) {
-            try ctx.reporter.pushError("could not find trashinfo file.", .{});
+            try ctx.reporter.pushError("trashinfo file not found: ({s})", .{trashinfo_path});
         }
         if (ctx.reporter.isError()) {
             ctx.reporter.EXIT_WITH_REPORT(1);
@@ -229,7 +229,7 @@ pub const RevertInfo = struct {
             }
         }
         if (revert_path == null) {
-            try ctx.reporter.pushError("could not find revert path.", .{});
+            try ctx.reporter.pushError("trashinfo missing Path= entry: ({s})", .{trashinfo_path});
             ctx.reporter.EXIT_WITH_REPORT(1);
         }
 
@@ -406,17 +406,17 @@ pub fn undoTrash(ctx: *Context) !void {
     var preflight_ok = true;
     for (files) |file| {
         if (try ctx.cwd.statNoFollow(file.trash_path) == null) {
-            try ctx.reporter.pushError("undo failed: trash file missing: {s}", .{file.trash_path});
+            try ctx.reporter.pushError("undo failed: trash file missing: ({s})", .{file.trash_path});
             preflight_ok = false;
         }
         if (try ctx.cwd.statNoFollow(file.original_path) != null) {
-            try ctx.reporter.pushError("undo failed: original path already exists: {s}", .{file.original_path});
+            try ctx.reporter.pushError("undo failed: original path already exists: ({s})", .{file.original_path});
             preflight_ok = false;
         }
         if (std.fs.path.dirname(file.original_path)) |parent| {
             const parent_stat = try ctx.cwd.statNoFollow(parent);
             if (parent_stat == null or parent_stat.?.kind != .directory) {
-                try ctx.reporter.pushError("undo failed: parent directory missing: {s}", .{parent});
+                try ctx.reporter.pushError("undo failed: parent directory missing: ({s})", .{parent});
                 preflight_ok = false;
             }
         }
@@ -476,7 +476,7 @@ pub fn fzfTrash(ctx: *Context, fzf_mode: FZFMode) !void {
         const preview_command_viu_flags: []const u8 = blk: {
             if (ctx.flag_fzf_preview_viu) {
                 if (!(try util.exec.exists(ctx.arena, "viu"))) {
-                    try ctx.reporter.pushError("--viu set but viu executable not found", .{});
+                    try ctx.reporter.pushError("--viu requires viu to be installed", .{});
                     ctx.reporter.EXIT_WITH_REPORT(1);
                 }
                 const viu_width_default: usize = if (preview_horizontal) winsize.col else @intFromFloat(@as(f32, @floatFromInt(winsize.col)) * 0.6);
@@ -731,10 +731,10 @@ const Context = struct {
                     }
                 },
                 .UnknownLong => |unknown_long| {
-                    try self.reporter.pushError("unknown long flag: {s}", .{unknown_long});
+                    try self.reporter.pushError("unknown flag: {s}", .{unknown_long});
                 },
                 .UnknownShort => |unknown_short| {
-                    try self.reporter.pushError("unknown short flag: -{c}", .{unknown_short});
+                    try self.reporter.pushError("unknown flag: -{c}", .{unknown_short});
                 },
             }
         }

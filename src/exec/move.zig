@@ -161,7 +161,7 @@ pub fn main() !void {
             { // CHECK SRC PATHS EXIST
                 for (src_path_list) |src_path| {
                     if (try ctx.cwd.statNoFollow(src_path) == null) {
-                        try ctx.reporter.pushError("src path not found: ({s})", .{src_path});
+                        try ctx.reporter.pushError("src not found: ({s})", .{src_path});
                     }
                 }
                 if (ctx.reporter.isError() or ctx.reporter.isWarning()) {
@@ -235,18 +235,18 @@ pub fn checkDest(
                     return true;
                 }
                 if (ctx.flag_clobber_style == .NoClobber) {
-                    try ctx.reporter.pushError("dest is a directory. use clobber flag or add '/' to dest to move src... into.", .{});
+                    try ctx.reporter.pushError("dest is a directory, add '/' to move into it or use a clobber flag (--trash --backup)", .{});
                 }
             } else {
                 if (ctx.flag_clobber_style == .NoClobber) {
-                    try ctx.reporter.pushError("dest child dir exists ({s})", .{dest_path});
+                    try ctx.reporter.pushError("dest already exists: ({s}), use a clobber flag (--trash --backup)", .{dest_path});
                 }
             }
         },
         .file, .sym_link => {
             if (ctx.flag_clobber_style == .NoClobber) {
                 if (dest_is_into_path) {
-                    try ctx.reporter.pushError("dest child path exists ({s})", .{dest_path});
+                    try ctx.reporter.pushError("dest already exists: ({s}), use a clobber flag (--trash --backup)", .{dest_path});
                 } else {
                     try ctx.reporter.pushError("dest path exists, choose a clobber flag (--trash --backup)", .{});
                 }
@@ -258,8 +258,8 @@ pub fn checkDest(
                     try ctx.reporter.pushError("dest path exists, choose a clobber flag (--trash --backup)", .{});
                 },
                 .Trash => {
-                    try ctx.reporter.pushError("dest path exists and --trash does not support file type {t}, use --backup", .{
-                        dest_stat.kind,
+                    try ctx.reporter.pushError("--trash does not support file type '{t}': ({s}), use --backup", .{
+                        dest_stat.kind, dest_path,
                     });
                 },
                 .Backup => {},
@@ -348,11 +348,11 @@ pub fn undoMove(ctx: *Context) !void {
     var preflight_ok = true;
     for (files) |file| {
         if (try ctx.cwd.statNoFollow(file.dest_path) == null) {
-            try ctx.reporter.pushError("undo failed: dest file missing: {s}", .{file.dest_path});
+            try ctx.reporter.pushError("undo failed: dest file missing: ({s})", .{file.dest_path});
             preflight_ok = false;
         }
         if (try ctx.cwd.statNoFollow(file.src_path) != null) {
-            try ctx.reporter.pushError("undo failed: original location occupied: {s}", .{file.src_path});
+            try ctx.reporter.pushError("undo failed: original path already exists: ({s})", .{file.src_path});
             preflight_ok = false;
         }
         const clobber = ClobberInfo{
@@ -363,13 +363,13 @@ pub fn undoMove(ctx: *Context) !void {
             .clobber_backup_trashinfo_path = file.clobber_backup_trashinfo_path,
         };
         if (try util.clobber_undo.preflight(ctx.cwd, clobber)) |missing| {
-            try ctx.reporter.pushError("undo failed: clobber path missing: {s}", .{missing});
+            try ctx.reporter.pushError("undo failed: clobber path missing: ({s})", .{missing});
             preflight_ok = false;
         }
         if (dirname(file.src_path)) |parent| {
             const parent_stat = try ctx.cwd.statNoFollow(parent);
             if (parent_stat == null or parent_stat.?.kind != .directory) {
-                try ctx.reporter.pushError("undo failed: parent directory missing: {s}", .{parent});
+                try ctx.reporter.pushError("undo failed: parent directory missing: ({s})", .{parent});
                 preflight_ok = false;
             }
         }
@@ -377,7 +377,7 @@ pub fn undoMove(ctx: *Context) !void {
             if (dirname(file.dest_path)) |parent| {
                 const parent_stat = try ctx.cwd.statNoFollow(parent);
                 if (parent_stat == null or parent_stat.?.kind != .directory) {
-                    try ctx.reporter.pushError("undo failed: clobber restore parent missing: {s}", .{parent});
+                    try ctx.reporter.pushError("undo failed: clobber restore parent missing: ({s})", .{parent});
                     preflight_ok = false;
                 }
             }
@@ -477,10 +477,10 @@ const Context = struct {
                     .b, .@"--backup" => self.flag_clobber_style.prioritySet(.Backup),
                 },
                 .UnknownLong => |unknown| {
-                    try self.reporter.pushError("unknown long flag: {s}", .{unknown});
+                    try self.reporter.pushError("unknown flag: {s}", .{unknown});
                 },
                 .UnknownShort => |unknown| {
-                    try self.reporter.pushError("unknown short flag: -{c}", .{unknown});
+                    try self.reporter.pushError("unknown flag: -{c}", .{unknown});
                 },
             }
         }

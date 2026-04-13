@@ -118,11 +118,7 @@ pub fn main() !void {
 
     const clobber_results = try clobberDestinations(&ctx, copy_list, dest_input);
     if (ctx.reporter.isError()) {
-        ctx.reporter.report();
-        if (ctx.fail_clobber) {
-            util.log("clobber flag required (--trash --backup)", .{});
-        }
-        std.process.exit(1);
+        ctx.reporter.EXIT_WITH_REPORT(1);
     }
 
     const dir_created_list = try performCopies(&ctx, copy_list);
@@ -185,7 +181,7 @@ fn expandSources(ctx: *Context, src_input: [][:0]const u8, dest_input: [:0]const
             switch (src_stat.kind) {
                 .directory, .file, .sym_link => {},
                 else => {
-                    try ctx.reporter.pushError("file type not supported [{t}]: ({s})", .{ src_stat.kind, src_path });
+                    try ctx.reporter.pushError("unsupported file type '{t}': ({s})", .{ src_stat.kind, src_path });
                     continue;
                 },
             }
@@ -219,7 +215,7 @@ fn expandSources(ctx: *Context, src_input: [][:0]const u8, dest_input: [:0]const
                             });
                         },
                         else => {
-                            try ctx.reporter.pushError("file type not supported [{t}]: ({s})", .{
+                            try ctx.reporter.pushError("unsupported file type '{t}': ({s})", .{
                                 item.kind,
                                 try path.joinZ(ctx.arena, &.{ src_path, item.path }),
                             });
@@ -228,7 +224,7 @@ fn expandSources(ctx: *Context, src_input: [][:0]const u8, dest_input: [:0]const
                 }
             }
         } else {
-            try ctx.reporter.pushError("src file not found: {s}", .{src_path});
+            try ctx.reporter.pushError("src not found: ({s})", .{src_path});
         }
     }
 
@@ -257,7 +253,7 @@ fn checkConflicts(ctx: *Context, copy_list: []const CopyItem, src_input: [][:0]c
     for (copy_list, 0..) |item_a, i| {
         for (copy_list[i + 1 ..]) |item_b| {
             if (try ctx.cwd.isPathSameLocation(item_a.dest, item_b.dest)) {
-                try ctx.reporter.pushError("src items have conflicting destination: {s} and {s}", .{ item_a.src, item_b.src });
+                try ctx.reporter.pushError("src items have conflicting dest: ({s}) and ({s})", .{ item_a.src, item_b.src });
             }
         }
     }
@@ -347,8 +343,7 @@ pub fn clobber(ctx: *Context, clobber_path: []const u8, src_kind: std.fs.File.Ki
         switch (ctx.flag_clobber_style) {
             .NoClobber => {
                 if (!is_merge_dir) {
-                    try ctx.reporter.pushError("dest path exists: ({s})", .{clobber_path});
-                    ctx.fail_clobber = true;
+                    try ctx.reporter.pushError("dest already exists: ({s}), use a clobber flag (--trash --backup)", .{clobber_path});
                 }
             },
             .Trash => {
@@ -432,7 +427,7 @@ pub fn undoCopy(ctx: *Context) !void {
     for (files) |file| {
         if (file.kind != .directory) {
             if (try ctx.cwd.statNoFollow(file.dest_path) == null) {
-                try ctx.reporter.pushError("undo failed: dest file missing: {s}", .{file.dest_path});
+                try ctx.reporter.pushError("undo failed: dest file missing: ({s})", .{file.dest_path});
                 preflight_ok = false;
             }
         }
@@ -444,14 +439,14 @@ pub fn undoCopy(ctx: *Context) !void {
             .clobber_backup_trashinfo_path = file.clobber_backup_trashinfo_path,
         };
         if (try util.clobber_undo.preflight(ctx.cwd, clobber_info)) |missing| {
-            try ctx.reporter.pushError("undo failed: clobber path missing: {s}", .{missing});
+            try ctx.reporter.pushError("undo failed: clobber path missing: ({s})", .{missing});
             preflight_ok = false;
         }
         if (clobber_info.hasClobber()) {
             if (std.fs.path.dirname(file.dest_path)) |parent| {
                 const parent_stat = try ctx.cwd.statNoFollow(parent);
                 if (parent_stat == null or parent_stat.?.kind != .directory) {
-                    try ctx.reporter.pushError("undo failed: clobber restore parent missing: {s}", .{parent});
+                    try ctx.reporter.pushError("undo failed: clobber restore parent missing: ({s})", .{parent});
                     preflight_ok = false;
                 }
             }
@@ -517,7 +512,6 @@ pub const Context = struct {
 
     args: ArgIterator = undefined,
     positionals: [][:0]const u8 = undefined,
-    fail_clobber: bool = false,
     flag_help: bool = false,
     flag_version: bool = false,
     flag_undo: bool = false,
