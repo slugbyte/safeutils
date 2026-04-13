@@ -29,6 +29,9 @@ pub fn build(b: *std.Build) void {
         b.installArtifact(exe);
         executables[i] = exe;
 
+        const install_step = b.step(b.fmt("install-{s}", .{exe_name}), b.fmt("Build and install {s}.", .{exe_name}));
+        install_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
+
         const run_cmd = b.addRunArtifact(exe);
         if (b.args) |args| {
             run_cmd.addArgs(args);
